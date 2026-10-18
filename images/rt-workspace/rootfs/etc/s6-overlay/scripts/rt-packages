@@ -1,0 +1,17 @@
+#!/command/with-contenv bash
+# Reinstall the tenant's apt packages after the container was recreated, then idle (s6 would
+# restart a longrun that exits). apt cannot fail the container: errors go to the log.
+list=/var/lib/rt/packages.list
+log=/var/lib/rt/log/packages.log
+if [ -s "$list" ]; then
+  missing=""
+  for p in $(cat "$list"); do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done
+  if [ -n "$missing" ]; then
+    echo "$(date -u +%FT%TZ) restoring:$missing" >> "$log"
+    export RT_RESTORING=1
+    ( apt-get update -qq && apt-get install -y --no-install-recommends $missing ) >> "$log" 2>&1 \
+      && echo "$(date -u +%FT%TZ) restored" >> "$log" \
+      || echo "$(date -u +%FT%TZ) restore FAILED" >> "$log"
+  fi
+fi
+exec sleep infinity

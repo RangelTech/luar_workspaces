@@ -1,0 +1,6 @@
+#!/bin/sh
+# Keeps /var/lib/rt/packages.list = manually installed packages minus the image baseline.
+[ "${RT_RESTORING:-0}" = "1" ] && exit 0
+mkdir -p /var/lib/rt
+apt-mark showmanual | sort | comm -13 /etc/rt/baseline.manual - > /var/lib/rt/packages.list.tmp \
+  && mv /var/lib/rt/packages.list.tmp /var/lib/rt/packages.list

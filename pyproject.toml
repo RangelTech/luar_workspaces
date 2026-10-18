@@ -1,0 +1,21 @@
+[project]
+name = "runtime-manager"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "docker: needs a local Docker daemon",
+  "integration: needs the dev stack (dev/compose.rm.yml) running",
+  "hermes: uses the real nousresearch/hermes-agent image (optional)",
+  "postgres: needs RM_TEST_DATABASE_URL",
+]

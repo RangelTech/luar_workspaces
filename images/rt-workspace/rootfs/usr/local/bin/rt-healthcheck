@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Healthy when sshd listens on :22 and the supervisor tree is up."""
+import os
+import sys
+
+
+def listening(port: int) -> bool:
+    for f in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            rows = open(f).read().splitlines()[1:]
+        except OSError:
+            continue
+        for r in rows:
+            cols = r.split()
+            if cols[3] == "0A" and int(cols[1].rsplit(":", 1)[1], 16) == port:
+                return True
+    return False
+
+
+sys.exit(0 if os.path.exists("/run/s6") and listening(22) else 1)

@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Print sshd_config. Listens only on interface addresses inside the given CIDR list.
+
+No CIDR given (standalone use): loopback only. CIDRs given but no matching address: exit 1, so
+the container never falls back to listening everywhere.
+"""
+import ipaddress
+import re
+import subprocess
+import sys
+
+cidrs = [c for c in (sys.argv[1] if len(sys.argv) > 1 else "").split(",") if c]
+if cidrs:
+    nets = [ipaddress.ip_network(c, strict=False) for c in cidrs]
+    out = subprocess.run(["ip", "-o", "-4", "addr"], capture_output=True, text=True).stdout
+    addrs = [a for a in re.findall(r"inet (\d+\.\d+\.\d+\.\d+)/", out)
+             if any(ipaddress.ip_address(a) in n for n in nets)]
+    if not addrs:
+        print("rt-sshd-config: no interface address inside " + ",".join(cidrs), file=sys.stderr)
+        sys.exit(1)
+else:
+    addrs = ["127.0.0.1"]
+lines = [f"ListenAddress {a}" for a in addrs]
+print("\n".join(lines + [
+    "Port 22",
+    "HostKey /var/lib/rt/ssh/ssh_host_ed25519_key",
+    "PermitRootLogin prohibit-password",
+    "PasswordAuthentication no",
+    "KbdInteractiveAuthentication no",
+    "PubkeyAuthentication yes",
+    "AuthorizedKeysFile /etc/rt/authorized_keys",
+    "AllowTcpForwarding no",
+    "X11Forwarding no",
+    "AllowAgentForwarding no",
+    "PermitTunnel no",
+    "UsePAM no",
+    "MaxSessions 10",
+    "MaxAuthTries 3",
+    "LoginGraceTime 20",
+    "ClientAliveInterval 30",
+    "ClientAliveCountMax 4",
+    "PrintMotd no",
+    "AcceptEnv LANG LC_*",
+    "Subsystem sftp internal-sftp",
+    "",
+]))

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Second supervision tree for the tenant's own services (persistent definitions).
+exec /command/s6-svscan /var/lib/rt/services

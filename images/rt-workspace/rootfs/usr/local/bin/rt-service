@@ -1,0 +1,50 @@
+#!/bin/bash
+# Manage supervised services that survive restarts and container recreation.
+#   rt-service add NAME [--user ws|root] [--cwd DIR] [--env K=V]... -- CMD ARGS...
+#   rt-service rm|restart|stop|start|status|logs NAME      rt-service list
+set -eu
+DIR=/var/lib/rt/services
+LOGDIR=/var/lib/rt/log
+name_ok() { [[ "$1" =~ ^[a-z][a-z0-9_-]{0,30}$ ]] || { echo "invalid service name: $1" >&2; exit 2; }; }
+rescan() { /command/s6-svscanctl -a "$DIR" 2>/dev/null || true; }
+cmd="${1:-list}"; shift || true
+case "$cmd" in
+  add)
+    name="${1:?name}"; shift; name_ok "$name"
+    user=ws; cwd=/workspace; envs=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --user) user="$2"; shift 2;;
+        --cwd) cwd="$2"; shift 2;;
+        --env) envs+=("$2"); shift 2;;
+        --) shift; break;;
+        *) echo "unknown option $1" >&2; exit 2;;
+      esac
+    done
+    [ $# -gt 0 ] || { echo "command required after --" >&2; exit 2; }
+    [ "$user" = ws ] || [ "$user" = root ] || { echo "user must be ws or root" >&2; exit 2; }
+    d="$DIR/$name"; mkdir -p "$d" "$LOGDIR"
+    {
+      echo '#!/bin/sh'
+      echo "log=$LOGDIR/$name.log"
+      echo '[ -f "$log" ] && [ "$(stat -c %s "$log")" -gt 10485760 ] && mv "$log" "$log.1"'
+      echo 'exec >>"$log" 2>&1'
+      echo "cd $(printf '%q' "$cwd") || exit 1"
+      for e in "${envs[@]+"${envs[@]}"}"; do echo "export $(printf '%q' "$e")"; done
+      line=""; for a in "$@"; do line="$line $(printf '%q' "$a")"; done
+      if [ "$user" = ws ]; then echo "exec /command/s6-setuidgid ws$line"; else echo "exec$line"; fi
+    } > "$d/run.tmp"
+    chmod 0755 "$d/run.tmp"; mv "$d/run.tmp" "$d/run"
+    rescan; echo "service $name defined"
+    ;;
+  rm) name="${1:?name}"; name_ok "$name"
+    /command/s6-svc -dx "$DIR/$name" 2>/dev/null || true
+    sleep 1; rm -rf "${DIR:?}/$name"; rescan;;
+  restart) name_ok "${1:?name}"; /command/s6-svc -r "$DIR/$1";;
+  stop) name_ok "${1:?name}"; /command/s6-svc -d "$DIR/$1";;
+  start) name_ok "${1:?name}"; /command/s6-svc -u "$DIR/$1";;
+  status) name_ok "${1:?name}"; /command/s6-svstat "$DIR/$1";;
+  logs) name_ok "${1:?name}"; tail -n "${2:-100}" "$LOGDIR/$1.log";;
+  list) for d in "$DIR"/*/; do [ -d "$d" ] && /command/s6-svstat "$d"; done || true;;
+  *) echo "usage: rt-service add|rm|restart|stop|start|status|logs|list" >&2; exit 2;;
+esac

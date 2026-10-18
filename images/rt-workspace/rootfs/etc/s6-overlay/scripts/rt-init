@@ -1,0 +1,20 @@
+#!/command/with-contenv bash
+# First stage-2 step: persistent state layout, pinned host key, authorized keys, sshd config.
+set -eu
+mkdir -p /var/lib/rt/ssh /var/lib/rt/services /var/lib/rt/log /home/ws /workspace /opt /run/sshd
+chmod 0755 /var/lib/rt
+chown ws:ws /workspace /home/ws 2>/dev/null || true
+
+key=/var/lib/rt/ssh/ssh_host_ed25519_key
+if [ ! -f "$key" ]; then
+  ssh-keygen -q -t ed25519 -N '' -C "rt-ws-host" -f "$key"
+fi
+chmod 600 "$key"; chmod 644 "$key.pub"
+
+# Public keys only. Root owned and not writable by the tenant (sshd StrictModes).
+printf '%s\n' "${RT_AUTHORIZED_KEYS:-}" > /etc/rt/authorized_keys
+chown root:root /etc/rt/authorized_keys; chmod 644 /etc/rt/authorized_keys
+
+/usr/local/bin/rt-sshd-config "${SSH_LISTEN_CIDRS:-}" > /etc/ssh/sshd_config
+/usr/sbin/sshd -t -f /etc/ssh/sshd_config
+echo "rt-init: ok (tenant=${RT_TENANT:-?})"
