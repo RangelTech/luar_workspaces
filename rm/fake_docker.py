@@ -34,6 +34,7 @@ class FakeDocker:
         self.networks: dict[str, dict] = {}
         self.volumes: dict[str, dict] = {}
         self.images: dict[str, dict] = {}
+        self.archives: dict = {}
         self.calls: list[tuple] = []
         self.auto_healthy = auto_healthy
         self.fail_start: set[str] = set()      # names whose start leaves them unhealthy
@@ -111,6 +112,17 @@ class FakeDocker:
         with self._mu:
             c = self.containers.get(name)
             return copy.deepcopy(c) if c else None
+
+    def put_archive(self, name, path, tar_bytes):
+        with self._mu:
+            self._rec("put_archive", name, path)
+            self._c(name)
+            self.archives[(name, path)] = tar_bytes
+
+    def get_archive(self, name, path):
+        with self._mu:
+            self._c(name)
+            return self.archives.get((name, path))
 
     def exec_run(self, name, cmd, *, user="", workdir="", timeout=60, env=None):
         with self._mu:

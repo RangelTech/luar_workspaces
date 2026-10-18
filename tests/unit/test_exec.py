@@ -81,3 +81,25 @@ def test_local_image_tags_are_pinned_to_content_id_at_boot(tmp_path):
     _pin_local_images(s, fake)
     assert s.workspace_image == "sha256:" + "a" * 64
     assert s.executor_image == "rt/executor:def"  # sem imagem local: nada muda
+
+
+def test_put_then_get_workspace_file_roundtrip_and_path_rules(env, tenant):
+    import io
+    import tarfile
+
+    out = env.svc.put_workspace_file(tenant, "/workspace/inbox/planilha.xlsx", b"BYTES", "kernel-harness")
+    assert out == {"path": "/workspace/inbox/planilha.xlsx", "size": 5}
+    raw = env.fake.archives[("rt-ws-acme1", "/workspace/inbox")]
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
+        assert [m.name for m in tf.getmembers()] == ["planilha.xlsx"]
+    # leitura devolve o arquivo do tar guardado pelo docker falso
+    env.fake.archives[("rt-ws-acme1", "/workspace/out/r.txt")] = raw
+    got = env.svc.get_workspace_file(tenant, "/workspace/out/r.txt", "kernel-harness")
+    assert got["content"] == b"BYTES"
+    for bad in ("/etc/passwd", "/workspace/../etc/passwd", "relativo.txt"):
+        with pytest.raises(ServiceError) as e:
+            env.svc.put_workspace_file(tenant, bad, b"x", "kernel-harness")
+        assert e.value.code == "bad_path"
+    with pytest.raises(ServiceError) as e:
+        env.svc.get_workspace_file(tenant, "/workspace/nao-existe", "kernel-harness")
+    assert e.value.code == "file_not_found"

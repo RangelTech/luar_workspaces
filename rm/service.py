@@ -191,6 +191,63 @@ class TenantService:
         return out
 
     MAX_EXEC_OUT = 24_000
+    MAX_FILE = 64 * 1024 * 1024
+
+    def put_workspace_file(self, t: str, path: str, data: bytes, actor: str) -> dict:
+        """Write a file into the tenant workspace (an attachment the user sent, for example)."""
+        import io
+        import posixpath
+        import tarfile
+        path = posixpath.normpath(path or "")
+        if not path.startswith("/workspace/") or ".." in path.split("/"):
+            raise ServiceError(400, "bad_path", "use a path under /workspace/")
+        if len(data) > self.MAX_FILE:
+            raise ServiceError(413, "file_too_large")
+        info = self._need_running_workspace(t)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            ti = tarfile.TarInfo(posixpath.basename(path))
+            ti.size = len(data)
+            ti.mode = 0o644
+            ti.uid = ti.gid = 1000
+            tf.addfile(ti, io.BytesIO(data))
+        self.docker.put_archive(info, posixpath.dirname(path), buf.getvalue())
+        self._event(t, actor, "workspace.put", {"path": path, "bytes": len(data)})
+        return {"path": path, "size": len(data)}
+
+    def get_workspace_file(self, t: str, path: str, actor: str) -> dict:
+        """Read one file from the tenant workspace (a result the agent wants to hand back)."""
+        import io
+        import posixpath
+        import tarfile
+        path = posixpath.normpath(path or "")
+        if not path.startswith(("/workspace/", "/home/ws/", "/opt/")) or ".." in path.split("/"):
+            raise ServiceError(400, "bad_path", "use a path under /workspace/")
+        name = self._need_running_workspace(t)
+        raw = self.docker.get_archive(name, path)
+        if raw is None:
+            raise ServiceError(404, "file_not_found", path)
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r") as tf:
+            member = next((m for m in tf.getmembers() if m.isfile()), None)
+            if member is None:
+                raise ServiceError(400, "not_a_file", path)
+            if member.size > self.MAX_FILE:
+                raise ServiceError(413, "file_too_large")
+            data = tf.extractfile(member).read()
+        self._event(t, actor, "workspace.get", {"path": path, "bytes": len(data)})
+        return {"path": path, "size": len(data), "content": data}
+
+    def _need_running_workspace(self, t: str) -> str:
+        row = self._need(t)
+        if not row["workspace_enabled"]:
+            raise ServiceError(409, "workspace_not_enabled")
+        if row["suspended"]:
+            raise ServiceError(423, "tenant_suspended")
+        name = naming.workspace_name(t)
+        info = self.docker.inspect_container(name)
+        if info is None or not (info.get("State") or {}).get("Running"):
+            raise ServiceError(409, "workspace_not_running")
+        return name
 
     def exec_workspace(self, t: str, command: str, actor: str, timeout_s: int = 60,
                        cwd: str = "/workspace", env: dict | None = None) -> dict:

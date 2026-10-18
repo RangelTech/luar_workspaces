@@ -297,6 +297,21 @@ def create_app(ctx: Ctx) -> FastAPI:
     async def workspace_action(t: str, action: str, request: Request):
         p = await principal(request)
         need_tenant(p, t)
+        if action == "put":
+            b = await _body_json(request)
+            import base64 as b64
+            try:
+                data = b64.b64decode(str(b.get("content_base64", "")), validate=True)
+            except ValueError:
+                raise ServiceError(400, "bad_content") from None
+            return await asyncio.to_thread(svc.put_workspace_file, t, str(b.get("path", "")), data,
+                                           p.service)
+        if action == "get":
+            b = await _body_json(request)
+            import base64 as b64
+            res = await asyncio.to_thread(svc.get_workspace_file, t, str(b.get("path", "")), p.service)
+            return {"path": res["path"], "size": res["size"],
+                    "content_base64": b64.b64encode(res["content"]).decode()}
         if action == "exec":
             b = await _body_json(request)
             return await asyncio.to_thread(

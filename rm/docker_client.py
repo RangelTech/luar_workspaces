@@ -57,6 +57,8 @@ class DockerClient(Protocol):
     def inspect_image(self, ref: str) -> dict | None: ...
     def exec_run(self, name: str, cmd: list[str], *, user: str = "", workdir: str = "",
                  timeout: int = 60, env: dict | None = None) -> dict: ...
+    def put_archive(self, name: str, path: str, tar_bytes: bytes) -> None: ...
+    def get_archive(self, name: str, path: str) -> bytes | None: ...
 
 
 def _demux(raw: bytes) -> tuple[str, str]:
@@ -111,6 +113,16 @@ class HttpDockerClient:
             return self.http.get("/_ping").status_code == 200
         except httpx.HTTPError:
             return False
+
+    # files: tar archives to/from a running container (agent <-> workspace file transfer)
+    def put_archive(self, name, path, tar_bytes):
+        self._req("PUT", f"/containers/{name}/archive", params={"path": path}, content=tar_bytes,
+                  headers={"Content-Type": "application/x-tar"}, ok=(200,), timeout=300)
+
+    def get_archive(self, name, path):
+        r = self._req("GET", f"/containers/{name}/archive", params={"path": path}, ok=(200, 404),
+                      timeout=300)
+        return r.content if r.status_code == 200 else None
 
     # exec (one command in a running container; output demultiplexed)
     def exec_run(self, name, cmd, *, user="", workdir="", timeout=60, env=None):
@@ -268,6 +280,16 @@ class PolicyDockerClient:
         if not _is_managed((info.get("Config") or {}).get("Labels")):
             return None  # foreign containers do not exist for the RM
         return info
+
+    def put_archive(self, name, path, tar_bytes):
+        if self.inspect_container(name) is None:
+            raise DockerError(404, f"container {name} not found")
+        self.inner.put_archive(name, path, tar_bytes)
+
+    def get_archive(self, name, path):
+        if self.inspect_container(name) is None:
+            raise DockerError(404, f"container {name} not found")
+        return self.inner.get_archive(name, path)
 
     def exec_run(self, name, cmd, *, user="", workdir="", timeout=60, env=None):
         if self.inspect_container(name) is None:  # only managed containers can be exec'd into
