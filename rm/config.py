@@ -84,6 +84,8 @@ class Settings:
     quota_backend: str = "fake"  # fake | xfs
     firewall_backend: str = "file"  # file | null
     allow_wake: bool = True
+    # resolvers handed to workspaces; the same addresses are allowed on port 53 by the firewall
+    workspace_dns: list[str] = field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -138,6 +140,8 @@ class Settings:
         s.workspace_image = e.get("RM_WORKSPACE_IMAGE", "")
         s.runtime_image = e.get("RM_RUNTIME_IMAGE", "")
         s.allowed_image_prefixes = [x for x in e.get("RM_ALLOWED_IMAGES", "").split(",") if x]
+        if e.get("RM_WORKSPACE_DNS") is not None:
+            s.workspace_dns = [x for x in e["RM_WORKSPACE_DNS"].split(",") if x]
         s.quota_backend = e.get("RM_QUOTA_BACKEND", s.quota_backend)
         s.firewall_backend = e.get("RM_FIREWALL_BACKEND", s.firewall_backend)
         return s

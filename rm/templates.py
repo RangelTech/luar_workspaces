@@ -178,6 +178,7 @@ def workspace_spec(s: Settings, tenant: str, image: str, generation: int, author
             "CapDrop": ["ALL"], "CapAdd": list(WS_CAPS),
             "SecurityOpt": ["no-new-privileges"],
             "OomScoreAdj": 500,
+            "Dns": list(s.workspace_dns),
             "Binds": [f"{base}/{sub}:{dst}" for sub, dst in WS_BINDS],
             "Privileged": False,
         },

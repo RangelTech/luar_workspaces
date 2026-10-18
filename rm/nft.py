@@ -39,6 +39,7 @@ class FirewallInput:
     worker_ips: list[str] = field(default_factory=list)
     extra_blocked: list[str] = field(default_factory=list)  # platform networks
     mining_ips: list[str] = field(default_factory=list)
+    dns_servers: list[str] = field(default_factory=list)  # resolvers a workspace may reach
     allow_git_protocol: bool = False
 
 
@@ -73,6 +74,7 @@ def render(fw: FirewallInput) -> str:
         _addr_set("workers", sorted(fw.worker_ips), False),
         _addr_set("blocked_ranges", blocked_ranges, True),
         _addr_set("mining_ips", sorted(fw.mining_ips), True),
+        _addr_set("dns_servers", sorted(fw.dns_servers), True),
         _addr_set("killed_egress", killed, True),
         _addr_set("killed_hub", killed_hub, False),
         _addr_set("edge_ips", edge_ips, False),
@@ -81,27 +83,32 @@ def render(fw: FirewallInput) -> str:
         "  chain forward {",
         "    type filter hook forward priority -10; policy accept;",
         "    ct state established,related accept",
-        "    ip saddr @killed_egress drop",
-        "    ip daddr @killed_egress drop",
-        "    ip saddr @killed_hub drop",
-        "    ip daddr @killed_hub drop",
+        "    ip saddr @killed_egress counter drop",
+        "    ip daddr @killed_egress counter drop",
+        "    ip saddr @killed_hub counter drop",
+        "    ip daddr @killed_hub counter drop",
         "    ip saddr @edge_ips ip daddr @ws_egress accept",
-        "    ip saddr @ws_egress ip daddr @edge_ips drop",
+        "    ip saddr @ws_egress ip daddr @edge_ips counter drop",
         "    ip saddr @workers ip daddr @ws_hub tcp dport 22 accept",
-        "    ip saddr @workers ip daddr @ws_hub drop",
-        "    ip saddr @ws_hub ip daddr @workers drop",
-        "    ip saddr @ws_hub ip daddr @ws_hub drop",
-        "    ip saddr @ws_egress ip daddr @ws_egress drop",
-        "    ip saddr @ws_egress ip daddr @blocked_ranges drop",
-        "    ip saddr @ws_egress ip daddr @mining_ips drop",
-        f"    ip saddr @ws_egress tcp dport {_ports(BLOCKED_TCP_OUT)} drop",
-        f"    ip saddr @ws_egress tcp dport {_ports(MINING_PORTS)} drop",
-        f"    ct state new add @ws_conn {{ ip saddr ct count over {CONNLIMIT} }} drop",
-        f"    ct state new add @ws_rate {{ ip saddr limit rate over {NEW_CONN_RATE} }} drop",
+        "    ip saddr @workers ip daddr @ws_hub counter drop",
+        "    ip saddr @ws_hub ip daddr @workers counter drop",
+        "    ip saddr @ws_hub ip daddr @ws_hub counter drop",
+        "    ip saddr @ws_egress ip daddr @ws_egress counter drop",
+        "    ip saddr @ws_egress ip daddr @dns_servers udp dport 53 accept",
+        "    ip saddr @ws_egress ip daddr @dns_servers tcp dport 53 accept",
+        "    ip saddr @ws_egress ip daddr @blocked_ranges counter drop",
+        "    ip saddr @ws_egress ip daddr @mining_ips counter drop",
+        f"    ip saddr @ws_egress tcp dport {_ports(BLOCKED_TCP_OUT)} counter drop",
+        f"    ip saddr @ws_egress tcp dport {_ports(MINING_PORTS)} counter drop",
+        # limiters apply to workspace traffic only, never to the platform's own containers
+        f"    ip saddr @ws_egress ct state new add @ws_conn {{ ip saddr ct count over {CONNLIMIT} }}"
+        " counter drop",
+        f"    ip saddr @ws_egress ct state new add @ws_rate {{ ip saddr limit rate over "
+        f"{NEW_CONN_RATE} }} counter drop",
         f"    ip saddr @ws_egress tcp dport {_ports(allowed_tcp)} accept",
         "    ip saddr @ws_egress udp dport { 53, 123 } accept",
-        "    ip saddr @ws_egress drop",
-        "    ip daddr @ws_egress drop",
+        "    ip saddr @ws_egress counter drop",
+        "    ip daddr @ws_egress counter drop",
         "  }",
         "}",
     ]

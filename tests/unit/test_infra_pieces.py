@@ -104,21 +104,35 @@ def test_nft_blocks_what_the_spec_says():
     fwd = r[r.index("chain forward"):]
     for port in (25, 465, 587, 22, 23, 445, 3389, 6667):
         assert str(port) in fwd.split("tcp dport { 22")[1].split("}")[0] or str(port) in fwd
-    assert "ip saddr @ws_egress ip daddr @ws_egress drop" in fwd          # tenant to tenant
-    assert "ip saddr @ws_hub ip daddr @ws_hub drop" in fwd                # hub: ws to ws
-    assert "ip saddr @ws_hub ip daddr @workers drop" in fwd               # ws never calls a worker
+    assert "ip saddr @ws_egress ip daddr @ws_egress counter drop" in fwd          # tenant to tenant
+    assert "ip saddr @ws_hub ip daddr @ws_hub counter drop" in fwd                # hub: ws to ws
+    assert "ip saddr @ws_hub ip daddr @workers counter drop" in fwd               # ws never calls a worker
     assert "ip saddr @workers ip daddr @ws_hub tcp dport 22 accept" in fwd
 
 
 def test_nft_rule_order_is_established_then_kill_then_allow_then_default_drop():
     fwd = rules().split("chain forward")[1].splitlines()
-    keys = ("ct state established", "ip saddr @killed_egress drop",
-            "ip saddr @ws_egress ip daddr @blocked_ranges drop",
-            "tcp dport { 53, 80, 123, 443 } accept", "ip saddr @ws_egress drop")
+    keys = ("ct state established", "ip saddr @killed_egress counter drop",
+            "ip saddr @ws_egress ip daddr @blocked_ranges counter drop",
+            "tcp dport { 53, 80, 123, 443 } accept", "ip saddr @ws_egress counter drop")
     idx = {k: next(i for i, line in enumerate(fwd) if k in line) for k in keys}
-    assert (idx["ct state established"] < idx["ip saddr @killed_egress drop"]
-            < idx["ip saddr @ws_egress ip daddr @blocked_ranges drop"]
-            < idx["tcp dport { 53, 80, 123, 443 } accept"] < idx["ip saddr @ws_egress drop"])
+    assert (idx["ct state established"] < idx["ip saddr @killed_egress counter drop"]
+            < idx["ip saddr @ws_egress ip daddr @blocked_ranges counter drop"]
+            < idx["tcp dport { 53, 80, 123, 443 } accept"] < idx["ip saddr @ws_egress counter drop"])
+
+
+def test_nft_limiters_only_touch_workspace_traffic():
+    fwd = rules().split("chain forward")[1]
+    for line in fwd.splitlines():
+        if "@ws_conn" in line or "@ws_rate" in line:
+            assert line.strip().startswith("ip saddr @ws_egress ct state new add"), line
+
+
+def test_nft_dns_to_configured_resolvers_precedes_private_range_block():
+    fwd = rules(dns_servers=["192.168.65.7"]).split("chain forward")[1].splitlines()
+    dns = next(i for i, line in enumerate(fwd) if "@dns_servers udp dport 53 accept" in line)
+    blocked = next(i for i, line in enumerate(fwd) if "@blocked_ranges counter drop" in line)
+    assert dns < blocked and "192.168.65.7" in rules(dns_servers=["192.168.65.7"])
 
 
 def test_nft_killed_tenant_addresses_only():

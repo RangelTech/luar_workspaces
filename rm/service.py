@@ -634,7 +634,8 @@ class TenantService:
             tenants.append(nft.tenant_net_for(r["tenant_id"], r["net_index"], r["suspended"]))
         ws = workers if workers is not None else self.store.worker_list()
         ips = [naming.hub_worker_ip(w["slot"]) for w in ws if w["slot"] <= 13]
-        return self.firewall.apply(nft.FirewallInput(tenants=tenants, worker_ips=ips))
+        return self.firewall.apply(nft.FirewallInput(
+            tenants=tenants, worker_ips=ips, dns_servers=list(self.s.workspace_dns)))
 
     # ----- kill switch -------------------------------------------------------------------
     def suspend(self, t: str, actor: str, reason: str, severity: str = "high") -> dict:
