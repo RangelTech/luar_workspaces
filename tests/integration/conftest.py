@@ -25,8 +25,15 @@ from rm.pool import PoolManager
 from rm.quota import FakeQuota
 from rm.service import NoopRevoker, TenantService
 from rm.store import MemoryStore
-from tests.integration.harness import (IS_WIN, EdgeSyncWriter, LiveFirewall, docker, nft_delete,
-                                       wait_healthy, wait_until)
+from tests.integration.harness import (
+    IS_WIN,
+    EdgeSyncWriter,
+    LiveFirewall,
+    docker,
+    nft_delete,
+    wait_healthy,
+    wait_until,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 PROXY_IMAGE = "tecnativa/docker-socket-proxy:0.3.0"
