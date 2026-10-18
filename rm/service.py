@@ -177,6 +177,34 @@ class TenantService:
                         for e in row["exposures"]]
         return out
 
+    MAX_EXEC_OUT = 24_000
+
+    def exec_workspace(self, t: str, command: str, actor: str, timeout_s: int = 60,
+                       cwd: str = "/workspace") -> dict:
+        """Run one shell command inside the tenant workspace (the agent's terminal)."""
+        if not isinstance(command, str) or not command.strip():
+            raise ServiceError(400, "command_required")
+        if len(command) > 20_000:
+            raise ServiceError(413, "command_too_large")
+        row = self._need(t)
+        if not row["workspace_enabled"]:
+            raise ServiceError(409, "workspace_not_enabled")
+        if row["suspended"]:
+            raise ServiceError(423, "tenant_suspended")
+        timeout_s = max(1, min(int(timeout_s), 600))
+        name = naming.workspace_name(t)
+        info = self.docker.inspect_container(name)
+        if info is None or not (info.get("State") or {}).get("Running"):
+            raise ServiceError(409, "workspace_not_running")
+        res = self.docker.exec_run(
+            name, ["timeout", "-k", "5", str(timeout_s), "bash", "-lc", command],
+            workdir=cwd, timeout=timeout_s)
+        self._event(t, actor, "workspace.exec", {"cmd_sha": hashlib.sha256(command.encode()).hexdigest()[:16],
+                                                 "exit": res.get("exit_code")})
+        cut = self.MAX_EXEC_OUT
+        return {"exit_code": res.get("exit_code"), "stdout": (res.get("stdout") or "")[-cut:],
+                "stderr": (res.get("stderr") or "")[-cut:]}
+
     def observed(self, t: str) -> dict:
         res: dict[str, Any] = {}
         for kind, name in (("runtime", naming.runtime_name(t)),

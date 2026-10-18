@@ -55,6 +55,20 @@ class DockerClient(Protocol):
     def create_volume(self, body: dict) -> str: ...
     def remove_volume(self, name: str, purge_of: str | None = None) -> None: ...
     def inspect_image(self, ref: str) -> dict | None: ...
+    def exec_run(self, name: str, cmd: list[str], *, user: str = "", workdir: str = "",
+                 timeout: int = 60) -> dict: ...
+
+
+def _demux(raw: bytes) -> tuple[str, str]:
+    """Docker multiplexed stream (8-byte header: stream id, 3 zero bytes, big-endian length)."""
+    out, err, i = bytearray(), bytearray(), 0
+    while i + 8 <= len(raw):
+        kind = raw[i]
+        size = int.from_bytes(raw[i + 4:i + 8], "big")
+        chunk = raw[i + 8:i + 8 + size]
+        (err if kind == 2 else out).extend(chunk)
+        i += 8 + size
+    return out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
 
 class HttpDockerClient:
@@ -97,6 +111,20 @@ class HttpDockerClient:
             return self.http.get("/_ping").status_code == 200
         except httpx.HTTPError:
             return False
+
+    # exec (one command in a running container; output demultiplexed)
+    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60):
+        body = {"Cmd": cmd, "AttachStdout": True, "AttachStderr": True, "Tty": False}
+        if user:
+            body["User"] = user
+        if workdir:
+            body["WorkingDir"] = workdir
+        eid = self._req("POST", f"/containers/{name}/exec", json=body).json()["Id"]
+        r = self._req("POST", f"/exec/{eid}/start", json={"Detach": False, "Tty": False},
+                      timeout=timeout + 15)
+        out, err = _demux(r.content)
+        info = self._req("GET", f"/exec/{eid}/json").json()
+        return {"exit_code": info.get("ExitCode"), "stdout": out, "stderr": err}
 
     # containers
     def list_containers(self, label_filters=None):
@@ -238,6 +266,11 @@ class PolicyDockerClient:
         if not _is_managed((info.get("Config") or {}).get("Labels")):
             return None  # foreign containers do not exist for the RM
         return info
+
+    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60):
+        if self.inspect_container(name) is None:  # only managed containers can be exec'd into
+            raise DockerError(404, f"container {name} not found")
+        return self.inner.exec_run(name, cmd, user=user, workdir=workdir, timeout=timeout)
 
     def inspect_network(self, name):
         info = self.inner.inspect_network(name)
