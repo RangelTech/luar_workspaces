@@ -26,6 +26,20 @@ from .store import MemoryStore, PostgresStore
 from .usage import UsageSampler
 
 
+def _pin_local_images(settings: Settings, docker: DockerClient) -> None:
+    """Imagens carregadas na VPS vem por tag (rt/<servico>:<id curto>): trava no ID de conteudo
+    (sha256:...), que e o que a politica exige. Sem a imagem local, mantem o valor (a politica recusa)."""
+    for attr in ("workspace_image", "runtime_image", "pool_image", "executor_image"):
+        ref = getattr(settings, attr, "")
+        if ref and not ref.startswith("sha256:") and "@sha256:" not in ref:
+            try:
+                info = docker.inspect_image(ref)
+            except Exception:  # noqa: BLE001 - daemon indisponivel no boot: a politica recusa depois
+                info = None
+            if info and str(info.get("Id", "")).startswith("sha256:"):
+                setattr(settings, attr, info["Id"])
+
+
 def build_ctx(settings: Settings, *, docker: DockerClient | None = None,
               store: MemoryStore | PostgresStore | None = None,
               quota: QuotaBackend | None = None, firewall: Firewall | None = None,
@@ -35,6 +49,7 @@ def build_ctx(settings: Settings, *, docker: DockerClient | None = None,
     store.migrate()
     if docker is None:
         docker = HttpDockerClient(settings.docker_host, settings.docker_api_version)
+    _pin_local_images(settings, docker)
     docker = PolicyDockerClient(docker, cfg=PolicyConfig(
         tenants_root=settings.tenants_root, hermes_root=settings.hermes_root,
         executor_root=settings.executor_root,

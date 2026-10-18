@@ -68,3 +68,16 @@ def test_exec_passes_only_valid_env_names(env, tenant):
                            env={"MERCADO_PAGO_TOKEN": "tok", "bad-name": "x", "OK": 5})
     rec = [r for r in env.fake.calls if r[0] == "exec_run"][-1]
     assert rec[-1] == {"MERCADO_PAGO_TOKEN": "tok"}
+
+
+def test_local_image_tags_are_pinned_to_content_id_at_boot(tmp_path):
+    from rm.fake_docker import FakeDocker
+    from rm.main import _pin_local_images
+    from tests.conftest import make_settings
+
+    s = make_settings(tmp_path, workspace_image="rt/workspace:abc", executor_image="rt/executor:def")
+    fake = FakeDocker()
+    fake.images = {"rt/workspace:abc": {"Id": "sha256:" + "a" * 64}}
+    _pin_local_images(s, fake)
+    assert s.workspace_image == "sha256:" + "a" * 64
+    assert s.executor_image == "rt/executor:def"  # sem imagem local: nada muda
