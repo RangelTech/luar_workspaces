@@ -38,6 +38,8 @@ case "$cmd" in
     rescan; echo "service $name defined"
     ;;
   rm) name="${1:?name}"; name_ok "$name"
+    # "down" first: svscan respawns a supervise whose directory still exists, which would restart the service
+    touch "$DIR/$name/down" 2>/dev/null || true
     /command/s6-svc -dx "$DIR/$name" 2>/dev/null || true
     sleep 1; rm -rf "${DIR:?}/$name"; rescan;;
   restart) name_ok "${1:?name}"; /command/s6-svc -r "$DIR/$1";;
