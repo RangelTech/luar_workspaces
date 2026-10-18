@@ -110,13 +110,13 @@ def test_nft_blocks_what_the_spec_says():
     assert "ip saddr @workers ip daddr @ws_hub tcp dport 22 accept" in fwd
 
 
-def test_nft_rule_order_is_established_then_kill_then_allow_then_default_drop():
+def test_nft_rule_order_is_kill_then_established_then_allow_then_default_drop():
     fwd = rules().split("chain forward")[1].splitlines()
     keys = ("ct state established", "ip saddr @killed_egress counter drop",
             "ip saddr @ws_egress ip daddr @blocked_ranges counter drop",
             "tcp dport { 53, 80, 123, 443 } accept", "ip saddr @ws_egress counter drop")
     idx = {k: next(i for i, line in enumerate(fwd) if k in line) for k in keys}
-    assert (idx["ct state established"] < idx["ip saddr @killed_egress counter drop"]
+    assert (idx["ip saddr @killed_egress counter drop"] < idx["ct state established"]
             < idx["ip saddr @ws_egress ip daddr @blocked_ranges counter drop"]
             < idx["tcp dport { 53, 80, 123, 443 } accept"] < idx["ip saddr @ws_egress counter drop"])
 
