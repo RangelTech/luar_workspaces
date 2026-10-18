@@ -56,7 +56,7 @@ class DockerClient(Protocol):
     def remove_volume(self, name: str, purge_of: str | None = None) -> None: ...
     def inspect_image(self, ref: str) -> dict | None: ...
     def exec_run(self, name: str, cmd: list[str], *, user: str = "", workdir: str = "",
-                 timeout: int = 60) -> dict: ...
+                 timeout: int = 60, env: dict | None = None) -> dict: ...
 
 
 def _demux(raw: bytes) -> tuple[str, str]:
@@ -113,8 +113,10 @@ class HttpDockerClient:
             return False
 
     # exec (one command in a running container; output demultiplexed)
-    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60):
+    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60, env=None):
         body = {"Cmd": cmd, "AttachStdout": True, "AttachStderr": True, "Tty": False}
+        if env:
+            body["Env"] = [f"{k}={v}" for k, v in env.items()]
         if user:
             body["User"] = user
         if workdir:
@@ -267,10 +269,10 @@ class PolicyDockerClient:
             return None  # foreign containers do not exist for the RM
         return info
 
-    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60):
+    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60, env=None):
         if self.inspect_container(name) is None:  # only managed containers can be exec'd into
             raise DockerError(404, f"container {name} not found")
-        return self.inner.exec_run(name, cmd, user=user, workdir=workdir, timeout=timeout)
+        return self.inner.exec_run(name, cmd, user=user, workdir=workdir, timeout=timeout, env=env)
 
     def inspect_network(self, name):
         info = self.inner.inspect_network(name)

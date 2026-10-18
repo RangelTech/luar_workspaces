@@ -61,3 +61,10 @@ def test_http_client_exec_roundtrip():
     res = cli.exec_run("ws", ["bash", "-lc", "x"], workdir="/workspace")
     assert res == {"exit_code": 3, "stdout": "out", "stderr": "err"}
     assert [m for m, _ in calls] == ["POST", "POST", "GET"]
+
+
+def test_exec_passes_only_valid_env_names(env, tenant):
+    env.svc.exec_workspace(tenant, "python x.py", "kernel-harness",
+                           env={"MERCADO_PAGO_TOKEN": "tok", "bad-name": "x", "OK": 5})
+    rec = [r for r in env.fake.calls if r[0] == "exec_run"][-1]
+    assert rec[-1] == {"MERCADO_PAGO_TOKEN": "tok"}

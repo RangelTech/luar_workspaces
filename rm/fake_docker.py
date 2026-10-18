@@ -112,9 +112,9 @@ class FakeDocker:
             c = self.containers.get(name)
             return copy.deepcopy(c) if c else None
 
-    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60):
+    def exec_run(self, name, cmd, *, user="", workdir="", timeout=60, env=None):
         with self._mu:
-            self._rec("exec_run", name, cmd)
+            self._rec("exec_run", name, cmd, env)
             self._c(name)
             out = getattr(self, "exec_results", {}).get(" ".join(cmd))
             return out or {"exit_code": 0, "stdout": "ok\n", "stderr": ""}

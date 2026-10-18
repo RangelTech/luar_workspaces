@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
@@ -33,6 +34,18 @@ Store = MemoryStore | PostgresStore
 RUNTIME_IDLE_S = 30 * 60
 WS_IDLE_S = 4 * 3600
 PURGE_RETENTION = timedelta(days=30)
+
+
+def _clean_env(env: dict | None) -> dict | None:
+    """Variaveis do comando (segredos do tenant vindos do kernel): nomes validos, valores limitados."""
+    if not env:
+        return None
+    out = {}
+    for k, v in env.items():
+        if isinstance(k, str) and re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", k) and isinstance(v, str) \
+                and len(v) <= 8192:
+            out[k] = v
+    return out or None
 
 
 class ServiceError(Exception):
@@ -180,7 +193,7 @@ class TenantService:
     MAX_EXEC_OUT = 24_000
 
     def exec_workspace(self, t: str, command: str, actor: str, timeout_s: int = 60,
-                       cwd: str = "/workspace") -> dict:
+                       cwd: str = "/workspace", env: dict | None = None) -> dict:
         """Run one shell command inside the tenant workspace (the agent's terminal)."""
         if not isinstance(command, str) or not command.strip():
             raise ServiceError(400, "command_required")
@@ -198,7 +211,7 @@ class TenantService:
             raise ServiceError(409, "workspace_not_running")
         res = self.docker.exec_run(
             name, ["timeout", "-k", "5", str(timeout_s), "bash", "-lc", command],
-            workdir=cwd, timeout=timeout_s)
+            workdir=cwd, timeout=timeout_s, env=_clean_env(env))
         self._event(t, actor, "workspace.exec", {"cmd_sha": hashlib.sha256(command.encode()).hexdigest()[:16],
                                                  "exit": res.get("exit_code")})
         cut = self.MAX_EXEC_OUT

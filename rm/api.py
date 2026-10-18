@@ -301,7 +301,8 @@ def create_app(ctx: Ctx) -> FastAPI:
             b = await _body_json(request)
             return await asyncio.to_thread(
                 svc.exec_workspace, t, str(b.get("command", "")), p.service,
-                int(b.get("timeout_s", 60)), str(b.get("cwd") or "/workspace"))
+                int(b.get("timeout_s", 60)), str(b.get("cwd") or "/workspace"),
+                b.get("env") if isinstance(b.get("env"), dict) else None)
         return await idempotent(request, t, lambda: svc.set_component(t, "workspace", action,
                                                                       p.service))
 
