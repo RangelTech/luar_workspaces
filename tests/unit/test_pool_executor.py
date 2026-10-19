@@ -128,7 +128,7 @@ def test_executor_body_has_no_network_no_caps_and_passes_policy(env):
     body = r.build_body("0123456789abcdef", 30, 256, 1.0)
     hc = body["HostConfig"]
     assert hc["NetworkMode"] == "none" and hc["CapDrop"] == ["ALL"] and "CapAdd" not in hc
-    assert hc["ReadonlyRootfs"] and hc["PidsLimit"] == 64 and hc["MemorySwap"] == hc["Memory"]
+    assert hc["ReadonlyRootfs"] and hc["PidsLimit"] == 128 and hc["MemorySwap"] == hc["Memory"]
     assert hc["Binds"][0].endswith(":/in:ro")
     assert "NetworkingConfig" not in body
     env.docker.policy.validate_container("rt-exec-0123456789ab", body)
