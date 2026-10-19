@@ -5,8 +5,12 @@ real xfs_quota binary through an injectable runner; it is NOT run against a real
 """
 from __future__ import annotations
 
+import json
+import os
 import subprocess
+import tempfile
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 Runner = Callable[[list[str]], str]
@@ -39,6 +43,49 @@ class FakeQuota:
     def report(self) -> dict[str, dict[str, int]]:
         return {t: {"used": self.used.get(t, 0), "hard": g * 1024**3}
                 for t, g in self.limits.items()}
+
+
+class FileQuota:
+    """Quota por tenant sem privilegios: o RM so escreve o que quer e le o que o host mediu.
+
+    Mesmo desenho do firewall (o RM nunca roda nft): `limits.json` e escrito atomicamente aqui; uma unit
+    `systemd.path` no host (host/rt-quota-apply.sh) aplica `xfs_quota` e publica `usage.json`.
+    """
+
+    def __init__(self, state_dir: str = "/var/lib/rt/quota"):
+        self.dir = Path(state_dir)
+
+    def _read(self, name: str) -> dict:
+        try:
+            return json.loads((self.dir / name).read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            return {}
+
+    def _write_limits(self, data: dict) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".limits.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, sort_keys=True)
+        os.replace(tmp, self.dir / "limits.json")
+
+    def set_limit(self, tenant: str, path: str, gb: int) -> None:
+        data = self._read("limits.json")
+        if data.get(tenant) != {"path": path, "gb": gb}:
+            data[tenant] = {"path": path, "gb": gb}
+            self._write_limits(data)
+
+    def usage_bytes(self, tenant: str) -> int:
+        return int(self._read("usage.json").get(tenant, {}).get("used", 0))
+
+    def remove(self, tenant: str) -> None:
+        data = self._read("limits.json")
+        if data.pop(tenant, None) is not None:
+            self._write_limits(data)
+
+    def report(self) -> dict[str, dict[str, int]]:
+        usage = self._read("usage.json")
+        return {t: {"used": int(usage.get(t, {}).get("used", 0)), "hard": int(v["gb"]) * 1024**3}
+                for t, v in self._read("limits.json").items()}
 
 
 def project_name(tenant: str) -> str:

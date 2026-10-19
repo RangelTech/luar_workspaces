@@ -20,7 +20,7 @@ from .executor import ExecutorRunner
 from .firewall import Firewall, NullFirewall, RulesetFileFirewall
 from .policy import PolicyConfig
 from .pool import PoolManager
-from .quota import FakeQuota, QuotaBackend, XfsQuota
+from .quota import FakeQuota, FileQuota, QuotaBackend, XfsQuota
 from .service import TenantService
 from .store import MemoryStore, PostgresStore
 from .usage import UsageSampler
@@ -55,7 +55,9 @@ def build_ctx(settings: Settings, *, docker: DockerClient | None = None,
         executor_root=settings.executor_root,
         allowed_image_prefixes=settings.allowed_image_prefixes))
     if quota is None:
-        if settings.quota_backend == "xfs":
+        if settings.quota_backend == "file":
+            quota = FileQuota(settings.quota_state_dir)
+        elif settings.quota_backend == "xfs":
             quota = XfsQuota(settings.tenants_root,
                              index_of=lambda t: (store.get_tenant(t) or {}).get("net_index", 0))
         else:

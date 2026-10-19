@@ -348,3 +348,20 @@ def test_abuse_monitor_ignores_normal_load(env, tenant):
     c["_cpu_ns"] = int(300e9)       # 30 %
     assert mon.scan() == []
     assert env.store.get_tenant("acme1")["suspended"] is False
+
+
+# ----- file quota (host aplica) ----------------------------------------------------------------
+def test_file_quota_writes_limits_atomically_and_reads_host_usage(tmp_path):
+    import json
+
+    q = quota.FileQuota(str(tmp_path))
+    q.set_limit("acme1", "/srv/rt/tenants/acme1", 5)
+    q.set_limit("acme1", "/srv/rt/tenants/acme1", 5)  # idempotente
+    saved = json.loads((tmp_path / "limits.json").read_text())
+    assert saved["acme1"] == {"path": "/srv/rt/tenants/acme1", "gb": 5}
+    assert q.usage_bytes("acme1") == 0
+    (tmp_path / "usage.json").write_text(json.dumps({"acme1": {"used": 4096}}))
+    assert q.usage_bytes("acme1") == 4096
+    assert q.report()["acme1"] == {"used": 4096, "hard": 5 * 1024**3}
+    q.remove("acme1")
+    assert q.report() == {}
