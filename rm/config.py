@@ -59,7 +59,7 @@ class Settings:
     executor_max_parallel: int = 4
     # abuse monitor
     abuse_cpu_threshold: float = 0.9
-    # O cpu.max ja limita o impacto; instalar/compilar (Metabase, Airflow) passa de 15 min a 100 % legitimamente.
+    # O cpu.max ja limita o impacto; instalar/compilar (Metabase, Airflow) passa de 15 min a 100 %.
     # Mineradores sao pegos pela assinatura do processo; so um uso colado no limite por 6 h vira suspensao.
     abuse_cpu_window_s: int = 21600
     # pool
