@@ -83,7 +83,8 @@ class Settings:
     workspace_image: str = ""
     runtime_image: str = ""
     allowed_image_prefixes: list[str] = field(default_factory=list)
-    quota_backend: str = "fake"  # fake | xfs
+    quota_backend: str = "fake"  # fake | xfs | file (host aplica; ver host/rt-quota-apply.sh)
+    quota_state_dir: str = "/var/lib/rt/quota"
     firewall_backend: str = "file"  # file | null
     allow_wake: bool = True
     # resolvers handed to workspaces; the same addresses are allowed on port 53 by the firewall
@@ -145,5 +146,6 @@ class Settings:
         if e.get("RM_WORKSPACE_DNS") is not None:
             s.workspace_dns = [x for x in e["RM_WORKSPACE_DNS"].split(",") if x]
         s.quota_backend = e.get("RM_QUOTA_BACKEND", s.quota_backend)
+        s.quota_state_dir = e.get("RM_QUOTA_STATE_DIR", s.quota_state_dir)
         s.firewall_backend = e.get("RM_FIREWALL_BACKEND", s.firewall_backend)
         return s
