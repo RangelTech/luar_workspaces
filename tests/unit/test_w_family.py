@@ -48,7 +48,8 @@ def test_w02_oom_hits_only_the_workspace_process_tree(env, tenant):
 def test_w03_resource_abuse_is_contained(env, tenant):
     hc = body(env)["HostConfig"]
     assert hc["PidsLimit"] == 512                              # fork bomb
-    assert hc["NanoCpus"] == 1_000_000_000 and hc["Ulimits"][0]["Hard"] == 4096
+    cpus = templates.workspace_limits(templates.DEFAULT_PLAN).cpus
+    assert hc["NanoCpus"] == int(cpus * 1_000_000_000) and hc["Ulimits"][0]["Hard"] == 4096
     assert hc["LogConfig"]["Config"]["max-size"] == "10m"
     assert hc["CapDrop"] == ["ALL"] and not hc["Privileged"]
     assert "no-new-privileges" in hc["SecurityOpt"]

@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from rm import naming, nft, quota
+from rm import naming, nft, quota, templates
 from rm.abuse import AbuseMonitor, miner_in_process
 from rm.backup import BackupError, LocalBackupBackend, ResticBackupBackend, sqlite_online_backup
 from rm.docker_client import Conflict, DockerError, HttpDockerClient
@@ -329,10 +329,11 @@ def test_abuse_monitor_cpu_burn_needs_the_full_window(env, tenant):
     c["_cpu_ns"] = 0
     assert mon.scan() == []
     clock[0] = 600
-    c["_cpu_ns"] = int(600e9)      # 100 % of 1 vCPU, but only for 10 minutes
+    vcpus = templates.workspace_limits(templates.DEFAULT_PLAN).cpus
+    c["_cpu_ns"] = int(600e9 * vcpus)      # 100 % of the limit, but only for 10 minutes
     assert mon.scan() == []
     clock[0] = 905
-    c["_cpu_ns"] = int(905e9)
+    c["_cpu_ns"] = int(905e9 * vcpus)
     hits = mon.scan()
     assert hits and "cpu at" in hits[0][1]
 

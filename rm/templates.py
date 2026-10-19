@@ -18,10 +18,11 @@ GiB = 1024 * MiB
 PLANS: dict[str, dict] = {
     "small": {"ws_mem": 512 * MiB, "quota_gb": 5},
     "standard": {"ws_mem": 1 * GiB, "quota_gb": 10},
-    "plus": {"ws_mem": 2 * GiB, "quota_gb": 10},
-    "pro": {"ws_mem": 4 * GiB, "quota_gb": 20},
+    "plus": {"ws_mem": 2 * GiB, "quota_gb": 10, "cpus": 2.0},
+    "pro": {"ws_mem": 4 * GiB, "quota_gb": 20, "cpus": 2.0},
 }
-DEFAULT_PLAN = "standard"
+# Metabase/Airflow (JVM, Python) nao cabem em 1 GiB: o plano padrao tem 2 GiB e 2 vCPU.
+DEFAULT_PLAN = "plus"
 
 
 @dataclass
@@ -44,7 +45,7 @@ def runtime_limits() -> Limits:
 
 def workspace_limits(plan: str, override: dict | None = None) -> Limits:
     p = PLANS.get(plan, PLANS[DEFAULT_PLAN])
-    lim = Limits(mem=p["ws_mem"], cpus=1.0, pids=512, cpu_shares=256,
+    lim = Limits(mem=p["ws_mem"], cpus=p.get("cpus", 1.0), pids=512, cpu_shares=256,
                  io_read_bps=30 * MiB, io_write_bps=30 * MiB)
     for k, v in (override or {}).items():
         if k in ("mem", "cpus", "pids", "tmpfs_mb", "cpu_shares", "nofile"):
