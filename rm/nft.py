@@ -45,6 +45,7 @@ class FirewallInput:
     mining_ips: list[str] = field(default_factory=list)
     dns_servers: list[str] = field(default_factory=list)  # resolvers a workspace may reach
     allow_git_protocol: bool = False
+    public_proxy_ips: list[str] = field(default_factory=list)  # reverse proxy (Traefik): https only
 
 
 def _ports(ports: list[int]) -> str:
@@ -79,6 +80,7 @@ def render(fw: FirewallInput) -> str:
         _addr_set("blocked_ranges", blocked_ranges, True),
         _addr_set("mining_ips", sorted(fw.mining_ips), True),
         _addr_set("dns_servers", sorted(fw.dns_servers), True),
+        _addr_set("public_proxy", sorted(fw.public_proxy_ips), True),
         _addr_set("killed_egress", killed, True),
         _addr_set("killed_hub", killed_hub, False),
         _addr_set("edge_ips", edge_ips, False),
@@ -100,6 +102,9 @@ def render(fw: FirewallInput) -> str:
         "    ip saddr @ws_egress ip daddr @ws_egress counter drop",
         "    ip saddr @ws_egress ip daddr @dns_servers udp dport 53 accept",
         "    ip saddr @ws_egress ip daddr @dns_servers tcp dport 53 accept",
+        # a workspace reaches the platform's public hostnames (hairpin through the host's published
+        # 443, DNAT-ed to the reverse proxy on a private address) over HTTPS only
+        "    ip saddr @ws_egress ip daddr @public_proxy tcp dport 443 accept",
         "    ip saddr @ws_egress ip daddr @blocked_ranges counter drop",
         "    ip saddr @ws_egress ip daddr @mining_ips counter drop",
         f"    ip saddr @ws_egress tcp dport {_ports(BLOCKED_TCP_OUT)} counter drop",
