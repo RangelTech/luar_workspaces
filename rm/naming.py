@@ -35,6 +35,8 @@ POOL_NET_CIDR = ipaddress.ip_network("10.198.0.0/24")  # rt-pool (workers)
 SSH_HUB_CIDR = ipaddress.ip_network("10.199.0.0/22")  # rt-ssh hub
 WORKER_RANGE = ipaddress.ip_network("10.199.0.0/28")  # worker addresses inside the hub
 WS_RANGE_START = 16  # workspace addresses inside the hub start at .16
+HUB_WS_FIRST = ipaddress.ip_address("10.199.0.16")  # first workspace address in the hub
+HUB_WS_LAST = ipaddress.ip_address("10.199.3.253")  # last one (hub_workspace_ip bound)
 MAX_TENANT_INDEX = 1000  # bounded by the ssh hub (/22 minus the worker range)
 
 

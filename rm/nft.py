@@ -6,6 +6,10 @@ Model (annex 04 2.7 and spec 04 9.2):
 - workspace egress networks: only 80/443/53/123 (+ optional 9418) leave; private ranges,
   metadata, platform networks, SMTP/IRC/mining and 22/23/445/3389 outbound are blocked.
 - kill switch: per-tenant drop of everything from/to the tenant addresses, placed first.
+- ssh hub, layer 2: rt-ssh is ONE bridge, so workspace <-> workspace frames never reach the
+  routed `forward` hook (and `br_netfilter` is not loaded on the host). They are dropped by the
+  separate `bridge rt_br` table, which matches the static hub address ranges (no set to refresh,
+  so a workspace that was just created is already isolated).
 The ruleset is written to a file (RulesetFileFirewall); the host applies it (systemd path unit).
 """
 from __future__ import annotations
@@ -112,7 +116,37 @@ def render(fw: FirewallInput) -> str:
         "  }",
         "}",
     ]
-    return "\n".join(o) + "\n"
+    return "\n".join(o) + "\n" + render_bridge(fw)
+
+
+def render_bridge(fw: FirewallInput) -> str:
+    """Layer-2 isolation of the ssh hub (table bridge rt_br). Independent of br_netfilter.
+
+    workspace -> workspace: dropped on every port and protocol (ranges, not a refreshed set).
+    worker -> workspace: tcp/22 only. workspace -> worker: only replies (never a plain SYN).
+    Workspaces cannot forge addresses: they hold no CAP_NET_RAW/CAP_NET_ADMIN."""
+    ws = f"{naming.HUB_WS_FIRST}-{naming.HUB_WS_LAST}"
+    workers = str(naming.WORKER_RANGE)
+    killed_hub = sorted({t.hub_ip for t in fw.tenants if t.killed})
+    elems = "    elements = { " + ", ".join(killed_hub) + " }\n" if killed_hub else ""
+    return "\n".join([
+        "table bridge rt_br",
+        "delete table bridge rt_br",
+        "table bridge rt_br {",
+        f"  set killed_hub {{\n    type ipv4_addr\n{elems}  }}",
+        "  chain forward {",
+        "    type filter hook forward priority -200; policy accept;",
+        "    ip saddr @killed_hub counter drop",
+        "    ip daddr @killed_hub counter drop",
+        f"    ip saddr {ws} ip daddr {ws} counter drop",
+        f"    ip saddr {workers} ip daddr {ws} tcp dport 22 accept",
+        f"    ip saddr {workers} ip daddr {ws} counter drop",
+        f"    ip saddr {ws} ip daddr {workers} tcp sport 22 "
+        "tcp flags & (fin | syn | rst | ack) != syn accept",
+        f"    ip saddr {ws} ip daddr {workers} counter drop",
+        "  }",
+        "}",
+    ]) + "\n"
 
 
 def tenant_net_for(tenant: str, index: int, killed: bool = False) -> TenantNet:
