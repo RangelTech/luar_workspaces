@@ -41,6 +41,10 @@ class FirewallInput:
     mining_ips: list[str] = field(default_factory=list)
     dns_servers: list[str] = field(default_factory=list)  # resolvers a workspace may reach
     allow_git_protocol: bool = False
+    # proxy publico da plataforma (traefik): o nome publico (ex.: chat/ia) resolve para o IP do
+    # host e o DNAT leva ao container, numa rede privada que o bloqueio de faixas derrubaria.
+    # 80/443 ali e o mesmo que o workspace ja alcanca pela internet.
+    public_proxy_ips: list[str] = field(default_factory=list)
 
 
 def _ports(ports: list[int]) -> str:
@@ -78,6 +82,7 @@ def render(fw: FirewallInput) -> str:
         _addr_set("killed_egress", killed, True),
         _addr_set("killed_hub", killed_hub, False),
         _addr_set("edge_ips", edge_ips, False),
+        _addr_set("public_proxy", sorted(fw.public_proxy_ips), False),
         "  set ws_conn {\n    type ipv4_addr\n    size 65535\n    flags dynamic\n  }\n",
         "  set ws_rate {\n    type ipv4_addr\n    size 65535\n    flags dynamic\n  }\n",
         "  chain forward {",
@@ -96,6 +101,7 @@ def render(fw: FirewallInput) -> str:
         "    ip saddr @ws_egress ip daddr @ws_egress counter drop",
         "    ip saddr @ws_egress ip daddr @dns_servers udp dport 53 accept",
         "    ip saddr @ws_egress ip daddr @dns_servers tcp dport 53 accept",
+        "    ip saddr @ws_egress ip daddr @public_proxy tcp dport { 80, 443 } accept",
         "    ip saddr @ws_egress ip daddr @blocked_ranges counter drop",
         "    ip saddr @ws_egress ip daddr @mining_ips counter drop",
         f"    ip saddr @ws_egress tcp dport {_ports(BLOCKED_TCP_OUT)} counter drop",

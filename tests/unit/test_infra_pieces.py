@@ -135,6 +135,16 @@ def test_nft_dns_to_configured_resolvers_precedes_private_range_block():
     assert dns < blocked and "192.168.65.7" in rules(dns_servers=["192.168.65.7"])
 
 
+def test_nft_public_proxy_https_precedes_private_range_block():
+    r = rules(public_proxy_ips=["172.20.0.9"])
+    fwd = r.split("chain forward")[1].splitlines()
+    rule = "@public_proxy tcp dport { 80, 443 } accept"
+    ok = next(i for i, line in enumerate(fwd) if rule in line)
+    blocked = next(i for i, line in enumerate(fwd) if "@blocked_ranges counter drop" in line)
+    assert ok < blocked and "172.20.0.9" in r
+    assert "172.20.0.9" not in rules()  # sem configuracao, nada muda
+
+
 def test_nft_killed_tenant_addresses_only():
     r = rules()
     assert "set killed_egress" in r
