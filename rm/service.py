@@ -204,14 +204,24 @@ class TenantService:
         if len(data) > self.MAX_FILE:
             raise ServiceError(413, "file_too_large")
         info = self._need_running_workspace(t)
+        # O Docker só extrai o tar em pasta que já existe (senão 404 -> 502). Por isso o tar leva
+        # as pastas intermediárias (ex.: pacote/, inbox/) como entradas e é extraído em /workspace.
+        rel = path[len("/workspace/"):]
+        parts = rel.split("/")
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w") as tf:
-            ti = tarfile.TarInfo(posixpath.basename(path))
+            for i in range(1, len(parts)):
+                di = tarfile.TarInfo("/".join(parts[:i]))
+                di.type = tarfile.DIRTYPE
+                di.mode = 0o755
+                di.uid = di.gid = 1000
+                tf.addfile(di)
+            ti = tarfile.TarInfo(rel)
             ti.size = len(data)
             ti.mode = 0o644
             ti.uid = ti.gid = 1000
             tf.addfile(ti, io.BytesIO(data))
-        self.docker.put_archive(info, posixpath.dirname(path), buf.getvalue())
+        self.docker.put_archive(info, "/workspace", buf.getvalue())
         self._event(t, actor, "workspace.put", {"path": path, "bytes": len(data)})
         return {"path": path, "size": len(data)}
 

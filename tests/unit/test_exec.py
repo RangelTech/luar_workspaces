@@ -89,9 +89,11 @@ def test_put_then_get_workspace_file_roundtrip_and_path_rules(env, tenant):
 
     out = env.svc.put_workspace_file(tenant, "/workspace/inbox/planilha.xlsx", b"BYTES", "kernel-harness")
     assert out == {"path": "/workspace/inbox/planilha.xlsx", "size": 5}
-    raw = env.fake.archives[("rt-ws-acme1", "/workspace/inbox")]
+    raw = env.fake.archives[("rt-ws-acme1", "/workspace")]
     with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
-        assert [m.name for m in tf.getmembers()] == ["planilha.xlsx"]
+        # a pasta intermediária vai no tar: o Docker não cria o diretório de destino sozinho
+        got = [(m.name, m.isdir()) for m in tf.getmembers()]
+        assert got == [("inbox", True), ("inbox/planilha.xlsx", False)]
     # leitura devolve o arquivo do tar guardado pelo docker falso
     env.fake.archives[("rt-ws-acme1", "/workspace/out/r.txt")] = raw
     got = env.svc.get_workspace_file(tenant, "/workspace/out/r.txt", "kernel-harness")
