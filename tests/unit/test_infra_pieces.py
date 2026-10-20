@@ -110,6 +110,50 @@ def test_nft_blocks_what_the_spec_says():
     assert "ip saddr @workers ip daddr @ws_hub tcp dport 22 accept" in fwd
 
 
+def test_nft_bridge_table_isolates_workspaces_at_layer_2():
+    r = rules()
+    br = r[r.index("table bridge rt_br"):]
+    ws = f"{naming.HUB_WS_FIRST}-{naming.HUB_WS_LAST}"
+    workers = str(naming.WORKER_RANGE)
+    lines = [ln.strip() for ln in br.splitlines()]
+    assert "delete table bridge rt_br" in lines
+    # ws -> ws: every port and protocol, matched on the static range (no set to go stale)
+    ww = f"ip saddr {ws} ip daddr {ws} counter drop"
+    assert ww in lines
+    assert f"ip saddr {workers} ip daddr {ws} tcp dport 22 accept" in lines
+    assert f"ip saddr {workers} ip daddr {ws} counter drop" in lines
+    assert f"ip saddr {ws} ip daddr {workers} counter drop" in lines
+    # a workspace may only answer a worker (never open a connection: pure SYN is not accepted)
+    reply = next(ln for ln in lines if "tcp sport 22" in ln)
+    assert "!= syn accept" in reply and ln_idx(lines, reply) < ln_idx(
+        lines, f"ip saddr {ws} ip daddr {workers} counter drop")
+    # the kill switch and ws<->ws drop come before any accept
+    first_accept = min(i for i, ln in enumerate(lines) if ln.endswith("accept")
+                       and "policy" not in ln)
+    assert ln_idx(lines, ww) < first_accept
+    assert ln_idx(lines, "ip saddr @killed_hub counter drop") < first_accept
+
+
+def ln_idx(lines, needle):
+    return lines.index(needle)
+
+
+def test_nft_bridge_range_covers_every_workspace_hub_address_and_no_worker():
+    import ipaddress
+    lo, hi = int(naming.HUB_WS_FIRST), int(naming.HUB_WS_LAST)
+    for i in (0, 1, 500, naming.MAX_TENANT_INDEX - 1):
+        assert lo <= int(ipaddress.ip_address(naming.hub_workspace_ip(i))) <= hi
+    for slot in range(1, 14):
+        assert int(ipaddress.ip_address(naming.hub_worker_ip(slot))) < lo
+
+
+def test_nft_bridge_killed_tenant_hub_ip_is_dropped_both_ways():
+    r = rules()
+    br = r[r.index("table bridge rt_br"):]
+    assert naming.hub_workspace_ip(1) in br.split("chain forward")[0]
+    assert naming.hub_workspace_ip(0) not in br.split("chain forward")[0]
+
+
 def test_nft_rule_order_is_kill_then_established_then_allow_then_default_drop():
     fwd = rules().split("chain forward")[1].splitlines()
     keys = ("ct state established", "ip saddr @killed_egress counter drop",

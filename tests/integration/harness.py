@@ -106,6 +106,8 @@ def nft_counter(tools_image: str, needle: str) -> int:
 def nft_delete(tools_image: str) -> None:
     docker("run", "--rm", "--privileged", "--net=host", tools_image, "nft", "delete", "table",
            "inet", "rt_fw", timeout=60, check=False)
+    docker("run", "--rm", "--privileged", "--net=host", tools_image, "nft", "delete", "table",
+           "bridge", "rt_br", timeout=60, check=False)
 
 
 # ----- rt-edge ----------------------------------------------------------------------------------
