@@ -100,7 +100,8 @@ def test_action_on_stopped_environment_does_not_wake(env, tenant):
 def test_logs_redacted_and_capped(env, tenant):
     key = " ".join(["timeout", "-k", "2", "20", "/usr/local/bin/rt-service", "logs", "web", "200"])
     env.fake.exec_results = {key: {"exit_code": 0, "stderr": "",
-                                   "stdout": "ok\nDB_PASSWORD=supersecret\nAuthorization: Bearer abcdefghijkl1234\n"}}
+                                   "stdout": "ok\nDB_PASSWORD=supersecret\n"
+                                             "Authorization: Bearer abcdefghijkl1234\n"}}
     out = env.svc.service_logs(tenant, "web", "backend", 9999, by="ana")
     assert out["lines"] == 200
     assert "supersecret" not in out["log"] and "abcdefghijkl1234" not in out["log"]
