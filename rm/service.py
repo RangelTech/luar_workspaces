@@ -743,7 +743,8 @@ class TenantService:
         ws = workers if workers is not None else self.store.worker_list()
         ips = [naming.hub_worker_ip(w["slot"]) for w in ws if w["slot"] <= 13]
         return self.firewall.apply(nft.FirewallInput(
-            tenants=tenants, worker_ips=ips, dns_servers=list(self.s.workspace_dns)))
+            tenants=tenants, worker_ips=ips, dns_servers=list(self.s.workspace_dns),
+            public_proxy_ips=list(self.s.public_proxy_ips)))
 
     # ----- kill switch -------------------------------------------------------------------
     def suspend(self, t: str, actor: str, reason: str, severity: str = "high") -> dict:

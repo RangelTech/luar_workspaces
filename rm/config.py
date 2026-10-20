@@ -89,6 +89,7 @@ class Settings:
     allow_wake: bool = True
     # resolvers handed to workspaces; the same addresses are allowed on port 53 by the firewall
     workspace_dns: list[str] = field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
+    public_proxy_ips: list[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -145,6 +146,8 @@ class Settings:
         s.allowed_image_prefixes = [x for x in e.get("RM_ALLOWED_IMAGES", "").split(",") if x]
         if e.get("RM_WORKSPACE_DNS") is not None:
             s.workspace_dns = [x for x in e["RM_WORKSPACE_DNS"].split(",") if x]
+        if e.get("RM_PUBLIC_PROXY_IPS"):
+            s.public_proxy_ips = [x.strip() for x in e["RM_PUBLIC_PROXY_IPS"].split(",") if x.strip()]
         s.quota_backend = e.get("RM_QUOTA_BACKEND", s.quota_backend)
         s.quota_state_dir = e.get("RM_QUOTA_STATE_DIR", s.quota_state_dir)
         s.firewall_backend = e.get("RM_FIREWALL_BACKEND", s.firewall_backend)

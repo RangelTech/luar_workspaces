@@ -409,3 +409,12 @@ def test_file_quota_writes_limits_atomically_and_reads_host_usage(tmp_path):
     assert q.report()["acme1"] == {"used": 4096, "hard": 5 * 1024**3}
     q.remove("acme1")
     assert q.report() == {}
+
+
+def test_nft_public_proxy_https_only_precedes_private_block():
+    txt = rules(public_proxy_ips=["172.21.0.5"])
+    fwd = txt.split("chain forward")[1].splitlines()
+    ok = next(i for i, line in enumerate(fwd) if "@public_proxy tcp dport 443 accept" in line)
+    blocked = next(i for i, line in enumerate(fwd) if "@blocked_ranges counter drop" in line)
+    assert ok < blocked and "172.21.0.5" in txt
+    assert "@public_proxy tcp dport 22" not in txt
