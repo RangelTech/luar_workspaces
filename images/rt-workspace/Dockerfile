@@ -45,7 +45,7 @@ RUN chmod 0755 /usr/local/bin/rt-* /etc/s6-overlay/scripts/* /etc/s6-overlay/s6-
 
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=${GIT_COMMIT}
-LABEL org.opencontainers.image.source="https://github.com/RangelTech/runtime-manager" \
+LABEL org.opencontainers.image.source="https://github.com/RangelTech/luar_workspaces" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
       org.opencontainers.image.description="rt-workspace: persistent tenant environment"
 

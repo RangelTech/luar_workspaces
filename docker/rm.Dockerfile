@@ -6,7 +6,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY rm ./rm
 COPY migrations ./migrations
 ARG GIT_COMMIT=unknown
-ARG SOURCE_URL=https://github.com/RangelTech/runtime-manager
+ARG SOURCE_URL=https://github.com/RangelTech/luar_workspaces
 ENV GIT_COMMIT=${GIT_COMMIT} PORT=8080
 LABEL org.opencontainers.image.source=${SOURCE_URL} \
       org.opencontainers.image.revision=${GIT_COMMIT} \

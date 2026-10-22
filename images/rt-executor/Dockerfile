@@ -12,7 +12,7 @@ USER executor
 
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=${GIT_COMMIT}
-LABEL org.opencontainers.image.source="https://github.com/RangelTech/runtime-manager" \
+LABEL org.opencontainers.image.source="https://github.com/RangelTech/luar_workspaces" \
       org.opencontainers.image.revision="${GIT_COMMIT}"
 HEALTHCHECK --interval=30s --timeout=10s --retries=2 \
   CMD ["python", "-c", "import pandas, openpyxl, matplotlib, pypdf, reportlab, qrcode"]
