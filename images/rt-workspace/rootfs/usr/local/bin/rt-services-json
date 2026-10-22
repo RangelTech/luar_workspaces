@@ -233,7 +233,7 @@ def listening():
         r = subprocess.run(["ss", "-ltnpH"], capture_output=True, timeout=4, text=True, errors="replace",
                            preexec_fn=_as_ws)
         groups.append(parse_ss(r.stdout))
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         pass
     for g in groups:
         for port, pids in g:
