@@ -219,9 +219,26 @@ def parse_ss(text):
     return res
 
 
+def _as_ws():
+    os.setgid(1000)
+    os.setuid(1000)
+
+
 def listening():
+    """Root nao enxerga os sockets de outro usuario (sem CAP_SYS_PTRACE): repete o ss como o usuario ws."""
+    merged = {}
     _, txt = run(["ss", "-ltnpH"], 4)
-    return parse_ss(txt)
+    groups = [parse_ss(txt)]
+    try:
+        r = subprocess.run(["ss", "-ltnpH"], capture_output=True, timeout=4, text=True, errors="replace",
+                           preexec_fn=_as_ws)
+        groups.append(parse_ss(r.stdout))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for g in groups:
+        for port, pids in g:
+            merged.setdefault(port, set()).update(pids)
+    return sorted((p, sorted(v)) for p, v in merged.items())
 
 
 # ---- principal ----------------------------------------------------------------------------------
@@ -327,7 +344,7 @@ def collect():
             conteineres.append({"nome": str(c.get("Names", ""))[:80], "imagem": str(c.get("Image", ""))[:120],
                                 "estado": str(c.get("State", ""))[:20], "status": str(c.get("Status", ""))[:80],
                                 "portas": redact_text(str(c.get("Ports", "")))[:160]})
-    return {"schema": 1, "gerado_em": int(time.time()), "servicos": servicos, "soltos": soltos,
+    return {"schema": 2, "gerado_em": int(time.time()), "servicos": servicos, "soltos": soltos,
             "conteineres": conteineres, "docker": tem_docker, "avisos": avisos}
 
 
@@ -335,7 +352,7 @@ def main():
     try:
         data = collect()
     except Exception as e:  # a saida tem que ser sempre JSON valido
-        data = {"schema": 1, "gerado_em": int(time.time()), "servicos": [], "soltos": [],
+        data = {"schema": 2, "gerado_em": int(time.time()), "servicos": [], "soltos": [],
                 "conteineres": [], "docker": False, "avisos": ["falha_coleta:" + type(e).__name__]}
     sys.stdout.write(json.dumps(data, ensure_ascii=False))
     sys.stdout.write("\n")
