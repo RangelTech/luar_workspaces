@@ -162,7 +162,7 @@ def run(cmd, timeout=5):
 
 
 # ---- supervisionados ----------------------------------------------------------------------------
-_UP = re.compile(r"^up \(pid (\d+)\) (\d+) seconds")
+_UP = re.compile(r"^up \(pid (\d+)(?: pgid \d+)?\) (\d+) seconds")
 _DOWN = re.compile(r"^down \((?:exitcode (\d+)|signal (\w+))\) (\d+) seconds")
 
 
