@@ -39,7 +39,7 @@ RUN useradd -m -u 1000 -s /bin/bash ws \
  && chown 1000:1000 /workspace
 
 COPY rootfs/ /
-RUN chmod 0755 /usr/local/bin/rt-* /etc/s6-overlay/scripts/* /etc/s6-overlay/s6-rc.d/*/run \
+RUN chmod 0755 /usr/local/bin/rt-* /usr/local/bin/luar-* /etc/s6-overlay/scripts/* /etc/s6-overlay/s6-rc.d/*/run \
  && apt-mark showmanual | sort > /etc/rt/baseline.manual \
  && rm -rf /var/lib/apt/lists/*
 
