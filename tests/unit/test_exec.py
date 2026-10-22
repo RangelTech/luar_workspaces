@@ -105,3 +105,11 @@ def test_put_then_get_workspace_file_roundtrip_and_path_rules(env, tenant):
     with pytest.raises(ServiceError) as e:
         env.svc.get_workspace_file(tenant, "/workspace/nao-existe", "kernel-harness")
     assert e.value.code == "file_not_found"
+
+
+def test_exec_accepts_runs_up_to_25_minutes_and_clamps_above(env, tenant):
+    # tarefa longa (>10 min): o teto do exec acompanha o turno do kernel (30 min), nao mais 600 s
+    for asked, applied in ((900, 900), (1500, 1500), (99999, 1500), (0, 1)):
+        env.svc.exec_workspace(tenant, "sleep 1", "kernel-harness", timeout_s=asked)
+        cmd = [r for r in env.fake.calls if r[0] == "exec_run"][-1]
+        assert str(applied) in cmd[2]
