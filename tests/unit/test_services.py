@@ -200,3 +200,9 @@ def test_old_workspace_without_script_gets_it_installed_then_lists(env, tenant):
 def test_bundled_script_is_identical_to_image_script():
     bundled = ROOT / "rm/assets/rt-services-json"
     assert bundled.read_bytes() == SCRIPT.read_bytes()
+
+
+def test_svstat_real_format_with_pgid_is_running():
+    mod = load_script()
+    d = mod.parse_svstat("up (pid 371 pgid 371) 4219 seconds")
+    assert d["estado"] == "rodando" and d["pid"] == 371 and d["uptime_s"] == 4219
