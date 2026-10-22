@@ -53,6 +53,15 @@ Uma tag `v*` publica 4 artefatos (`runtime-manager`, `workspace`, `executor`, `e
 - O executor não tem rede; o workspace sai para a internet só pelo que o firewall da empresa permite.
 - O serviço nunca fala com o Docker direto, só pelo socket-proxy.
 
+## Contratos e APIs
+
+API interna (FastAPI, só rede privada): `GET /health`, `GET /metrics`, `GET /v1/fleet` e `POST /v1/fleet:freeze`; `POST /v1/executor/runs`; pool de workers em `/v1/pool/*`; ciclo da empresa em `/v1/tenants/{t}` (criar, `runtime:{ação}`, `workspace:{ação}`, `backup`, `restore`, `exposures`, `domains`, `events`). Definidas em `rm/api.py`. Variáveis: `RM_LOG_LEVEL` e as de `rm/` (só nomes; valores ficam no Infisical).
+
+## Runbooks e decisões
+
+- [`docs/runbooks/kill-switch.md`](docs/runbooks/kill-switch.md): congelar a frota ou uma empresa.
+- [`docs/adr/0001-executor-sem-rede.md`](docs/adr/0001-executor-sem-rede.md): por que o executor não tem rede.
+
 ## Como contribuir
 
 Uma branch por tarefa, Conventional Commits em português, `verify.sh` verde.
