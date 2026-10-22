@@ -7,7 +7,7 @@ COPY traefik.yml /etc/traefik/traefik.yml
 RUN mkdir -p /etc/traefik/dynamic
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=${GIT_COMMIT}
-LABEL org.opencontainers.image.source="https://github.com/RangelTech/runtime-manager" \
+LABEL org.opencontainers.image.source="https://github.com/RangelTech/luar_workspaces" \
       org.opencontainers.image.revision="${GIT_COMMIT}"
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 CMD ["traefik", "healthcheck", "--ping"]

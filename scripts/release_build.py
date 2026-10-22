@@ -50,7 +50,7 @@ def main(version: str) -> None:
                             capture_output=True).stdout
         cfg = re.sub(r"^.*/", "", json.loads(mf)[0]["Config"]).replace(".json", "")
         m = {
-            "schema": 1, "service": name, "repo": "RangelTech/runtime-manager", "commit": sha[:7],
+            "schema": 1, "service": name, "repo": "RangelTech/luar_workspaces", "commit": sha[:7],
             "version": version,
             "artifact": {"type": "docker-archive", "asset": asset, "sha256": h.hexdigest(),
                          "image_id": f"sha256:{cfg}", "tag": tag},
