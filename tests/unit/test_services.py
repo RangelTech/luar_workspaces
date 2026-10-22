@@ -188,7 +188,7 @@ def test_old_workspace_without_script_gets_it_installed_then_lists(env, tenant):
         if " ".join(cmd) == CMD:
             calls["n"] += 1
             if calls["n"] == 1:
-                return {"exit_code": 127, "stdout": "", "stderr": "timeout: failed to run command: No such file"}
+                return {"exit_code": 127, "stdout": "", "stderr": "timeout: No such file"}
             return {"exit_code": 0, "stdout": json.dumps(PAYLOAD), "stderr": ""}
         return real(name, cmd, **kw)
 

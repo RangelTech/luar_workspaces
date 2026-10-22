@@ -312,7 +312,8 @@ class TenantService:
             return out
         probe = ["timeout", "-k", "2", "20", self.SERVICES_SCRIPT]
         res = self.docker.exec_run(name, probe, user="root", timeout=25)
-        if res.get("exit_code") == 127 or "not found" in (res.get("stderr") or "").lower()                 or "no such file" in (res.get("stderr") or "").lower():
+        err = (res.get("stderr") or "").lower()
+        if res.get("exit_code") == 127 or "not found" in err or "no such file" in err:
             # Workspace criado de uma imagem anterior ao script: instala a copia embutida e repete.
             self._install_services_script(name)
             res = self.docker.exec_run(name, probe, user="root", timeout=25)
