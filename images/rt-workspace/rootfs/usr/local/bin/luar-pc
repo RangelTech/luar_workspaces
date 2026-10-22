@@ -132,8 +132,7 @@ def cmd_ls(name, path):
     _, osname, _ = ssh_base(name)
     if is_win(osname):
         c = (f"$p={win_path(path)}; Get-ChildItem -Force -LiteralPath $p -ErrorAction Stop | ForEach-Object {{ "
-             "'{0}`t{1}`t{2}`t{3}' -f $(if($_.PSIsContainer){'D'}else{'F'}),$_.Length,"
-             "$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm'),$_.Name }")
+             "(@($(if($_.PSIsContainer){'D'}else{'F'}),$_.Length,$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm'),$_.Name) -join [char]9) }")
     else:
         c = f"ls -la --time-style=long-iso -- {lin_path(path)}"
     return emit(remote(name, c)[0], 16384)
