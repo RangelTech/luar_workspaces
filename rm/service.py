@@ -310,8 +310,12 @@ class TenantService:
                                "docker": False, "avisos": []}
         if estado != "ativo":
             return out
-        res = self.docker.exec_run(name, ["timeout", "-k", "2", "20", self.SERVICES_SCRIPT],
-                                   user="root", timeout=25)
+        probe = ["timeout", "-k", "2", "20", self.SERVICES_SCRIPT]
+        res = self.docker.exec_run(name, probe, user="root", timeout=25)
+        if res.get("exit_code") == 127 or "not found" in (res.get("stderr") or "").lower()                 or "no such file" in (res.get("stderr") or "").lower():
+            # Workspace criado de uma imagem anterior ao script: instala a copia embutida e repete.
+            self._install_services_script(name)
+            res = self.docker.exec_run(name, probe, user="root", timeout=25)
         try:
             data = json.loads((res.get("stdout") or "").strip().splitlines()[-1])
             if not isinstance(data, dict) or res.get("exit_code") not in (0, None):
@@ -334,6 +338,17 @@ class TenantService:
         out["docker"] = bool(data.get("docker"))
         out["gerado_em"] = data.get("gerado_em")
         return out
+
+    def _install_services_script(self, name: str) -> None:
+        import io
+        import tarfile
+        data = (Path(__file__).parent / "assets" / "rt-services-json").read_bytes()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            ti = tarfile.TarInfo("rt-services-json")
+            ti.size, ti.mode, ti.uid, ti.gid = len(data), 0o755, 0, 0
+            tf.addfile(ti, io.BytesIO(data))
+        self.docker.put_archive(name, "/usr/local/bin", buf.getvalue())
 
     def _service_target(self, t: str, svc_name: str) -> tuple[str, str]:
         if not isinstance(svc_name, str) or not self.SERVICE_NAME.match(svc_name):

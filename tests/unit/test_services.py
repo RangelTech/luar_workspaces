@@ -178,3 +178,25 @@ def test_vocabulary_has_no_internal_names():
     blob = SCRIPT.read_text(encoding="utf-8").lower()
     for w in ("kernel", "hermes", "harness"):
         assert w not in blob
+
+
+def test_old_workspace_without_script_gets_it_installed_then_lists(env, tenant):
+    calls = {"n": 0}
+    real = env.fake.exec_run
+
+    def exec_run(name, cmd, **kw):
+        if " ".join(cmd) == CMD:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"exit_code": 127, "stdout": "", "stderr": "timeout: failed to run command: No such file"}
+            return {"exit_code": 0, "stdout": json.dumps(PAYLOAD), "stderr": ""}
+        return real(name, cmd, **kw)
+
+    env.fake.exec_run = exec_run
+    out = env.svc.list_services(tenant, "backend")
+    assert out["servicos"][0]["nome"] == "web" and calls["n"] == 2
+
+
+def test_bundled_script_is_identical_to_image_script():
+    bundled = ROOT / "rm/assets/rt-services-json"
+    assert bundled.read_bytes() == SCRIPT.read_bytes()

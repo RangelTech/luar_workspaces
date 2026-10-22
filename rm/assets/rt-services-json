@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""Somente leitura: imprime em JSON o que roda neste ambiente.
+
+Junta (a) servicos supervisionados (rt-service / s6), (b) portas em escuta ligadas ao processo,
+(c) CPU e memoria, (d) conteineres, se houver docker, e (e) processos soltos (sem supervisao),
+com os argumentos sem segredos. Nao recebe argumentos; a saida e sempre um JSON valido.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+SERVICES_DIR = os.environ.get("RT_SERVICES_DIR", "/var/lib/rt/services")
+PROC = os.environ.get("RT_PROC_ROOT", "/proc")
+MARK = "[REDACTED]"
+CMD_MAX = 240
+
+# ---- redacao de segredos (mesmo conjunto de regras de rm/redact.py) ---------------------------
+_SENSITIVE = r"(?:pass(?:word|wd)?|secret|token|api[-_]?key|apikey|auth|credential|private[-_]?key|key)"
+_FLAG_WORD = re.compile(r"^--?[A-Za-z0-9_.-]*" + _SENSITIVE + r"[A-Za-z0-9_.-]*$", re.I)
+_FLAG_EQ = re.compile(r"^(--?[A-Za-z0-9_.-]*" + _SENSITIVE + r"[A-Za-z0-9_.-]*)=(.*)$", re.I | re.S)
+_ENV_EQ = re.compile(r"^([A-Za-z0-9_]*" + _SENSITIVE + r"[A-Za-z0-9_]*)=(.*)$", re.I | re.S)
+_TEXT_KV = re.compile(
+    r"(?i)(\b[A-Za-z0-9_.-]*" + _SENSITIVE + r"[A-Za-z0-9_.-]*\b\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;\"']+)")
+_FLAG_TEXT = re.compile(
+    r"(?i)(--?[A-Za-z0-9_.-]*" + _SENSITIVE + r"[A-Za-z0-9_.-]*\s+)(?!-)(\"[^\"]*\"|'[^']*'|\S+)")
+_URL_USER = re.compile(r"(\b[a-z][a-z0-9+.-]*://[^/\s:@]+:)([^@/\s]+)(@)", re.I)
+_BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
+_TOKENS = re.compile(
+    r"\b(?:sk|pk|rk)[-_][A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|\bAKIA[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}"
+    r"|\bAIza[0-9A-Za-z_-]{30,}")
+
+
+def redact_text(text):
+    s = str(text)
+    s = _URL_USER.sub(lambda m: m.group(1) + MARK + m.group(3), s)
+    s = _BEARER.sub(lambda m: m.group(1) + " " + MARK, s)
+    s = _FLAG_TEXT.sub(lambda m: m.group(1) + MARK, s)
+    s = _TEXT_KV.sub(lambda m: m.group(1) + MARK, s)
+    s = _TOKENS.sub(MARK, s)
+    return s
+
+
+def redact_argv(argv):
+    out, hide_next = [], False
+    for a in argv:
+        if hide_next:
+            out.append(MARK)
+            hide_next = False
+            continue
+        m = _FLAG_EQ.match(a) or None
+        if m:
+            out.append(m.group(1) + "=" + MARK)
+            continue
+        m = _ENV_EQ.match(a)
+        if m:
+            out.append(m.group(1) + "=" + MARK)
+            continue
+        if _FLAG_WORD.match(a):
+            out.append(a)
+            hide_next = True
+            continue
+        out.append(redact_text(a))
+    return out
+
+
+# ---- leitura de /proc ---------------------------------------------------------------------------
+def _read(path, default=""):
+    try:
+        with open(path, "rb") as f:
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return default
+
+
+def _pids():
+    try:
+        return sorted(int(x) for x in os.listdir(PROC) if x.isdigit())
+    except OSError:
+        return []
+
+
+def _stat(pid):
+    raw = _read(f"{PROC}/{pid}/stat")
+    i, j = raw.find("("), raw.rfind(")")
+    if i < 0 or j < 0:
+        return None
+    f = raw[j + 2:].split()
+    try:
+        return {"comm": raw[i + 1:j], "ppid": int(f[1]), "ticks": int(f[11]) + int(f[12]),
+                "start": int(f[19]), "rss_pages": int(f[21])}
+    except (IndexError, ValueError):
+        return None
+
+
+def _argv(pid):
+    raw = _read(f"{PROC}/{pid}/cmdline")
+    return [a for a in raw.split("\0") if a != ""] if raw else []
+
+
+def _uid(pid):
+    for line in _read(f"{PROC}/{pid}/status").splitlines():
+        if line.startswith("Uid:"):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return -1
+    return -1
+
+
+def _clk():
+    try:
+        return os.sysconf("SC_CLK_TCK")
+    except (ValueError, OSError):
+        return 100
+
+
+def _uptime_of(st, now_up):
+    return max(0, int(now_up - st["start"] / _clk()))
+
+
+def _boot_uptime():
+    try:
+        return float(_read(f"{PROC}/uptime").split()[0])
+    except (IndexError, ValueError):
+        return 0.0
+
+
+def snapshot():
+    procs = {}
+    for pid in _pids():
+        st = _stat(pid)
+        if st:
+            procs[pid] = st
+    return procs
+
+
+def tree_of(root, procs):
+    kids = {}
+    for pid, st in procs.items():
+        kids.setdefault(st["ppid"], []).append(pid)
+    out, todo = set(), [root]
+    while todo:
+        p = todo.pop()
+        if p in out:
+            continue
+        out.add(p)
+        todo.extend(kids.get(p, []))
+    return out
+
+
+def run(cmd, timeout=5):
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout, text=True, errors="replace")
+        return r.returncode, r.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+
+
+# ---- supervisionados ----------------------------------------------------------------------------
+_UP = re.compile(r"^up \(pid (\d+)\) (\d+) seconds")
+_DOWN = re.compile(r"^down \((?:exitcode (\d+)|signal (\w+))\) (\d+) seconds")
+
+
+def parse_svstat(line):
+    """'up (pid 12) 30 seconds' / 'down (exitcode 1) 2 seconds, want up' -> dict."""
+    line = (line or "").strip()
+    m = _UP.match(line)
+    if m:
+        return {"estado": "rodando", "pid": int(m.group(1)), "uptime_s": int(m.group(2))}
+    m = _DOWN.match(line)
+    if m:
+        secs = int(m.group(3))
+        want_up = "want up" in line
+        normally_down = "normally up" not in line and "normally down" in line
+        reiniciando = want_up or (secs < 3 and not normally_down and m.group(1) not in (None, "0"))
+        return {"estado": "reiniciando" if reiniciando else "parado", "pid": None, "uptime_s": 0,
+                "saida": m.group(1) if m.group(1) is not None else m.group(2)}
+    return {"estado": "parado", "pid": None, "uptime_s": 0}
+
+
+def supervised():
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(SERVICES_DIR)
+                       if os.path.isdir(os.path.join(SERVICES_DIR, n)) and not n.startswith("."))
+    except OSError:
+        return out
+    for n in names:
+        _, txt = run(["/command/s6-svstat", os.path.join(SERVICES_DIR, n)], 3)
+        d = parse_svstat(txt.splitlines()[0] if txt else "")
+        d["nome"] = n
+        d["iniciar_no_boot"] = not os.path.exists(os.path.join(SERVICES_DIR, n, "down"))
+        out.append(d)
+    return out
+
+
+# ---- portas -------------------------------------------------------------------------------------
+_USERS = re.compile(r'pid=(\d+)')
+
+
+def parse_ss(text):
+    """ss -ltnpH -> [(porta, [pids])]"""
+    res = []
+    for line in text.splitlines():
+        cols = line.split()
+        if len(cols) < 4:
+            continue
+        local = cols[3]
+        try:
+            port = int(local.rsplit(":", 1)[1])
+        except (IndexError, ValueError):
+            continue
+        res.append((port, [int(x) for x in _USERS.findall(line)]))
+    return res
+
+
+def listening():
+    _, txt = run(["ss", "-ltnpH"], 4)
+    return parse_ss(txt)
+
+
+# ---- principal ----------------------------------------------------------------------------------
+INFRA = {"s6-svscan", "s6-supervise", "s6-linux-init", "s6-ipcserverd", "s6-svwait", "sshd", "sshd-session",
+         "s6-rc", "s6-fdholderd", "s6-ftrigrd", "s6-log", "s6-overlay-susp", "ss", "ps", "sleep",
+         "timeout", "init", "rt-services-json", "docker", "dockerd", "containerd"}
+SHELLS = {"bash", "sh", "dash", "zsh"}
+
+
+def sample(pids, procs, wait=0.25):
+    t0 = {p: procs[p]["ticks"] for p in pids if p in procs}
+    time.sleep(wait)
+    cpu = {}
+    for p in t0:
+        st = _stat(p)
+        if st:
+            cpu[p] = max(0.0, (st["ticks"] - t0[p]) / _clk() / wait * 100.0)
+    return cpu
+
+
+def mem_mb(pids, procs):
+    page = os.sysconf("SC_PAGE_SIZE") if hasattr(os, "sysconf") else 4096
+    return round(sum(procs[p]["rss_pages"] for p in pids if p in procs) * page / 1048576.0, 1)
+
+
+def collect():
+    avisos = []
+    procs = snapshot()
+    up_now = _boot_uptime()
+    sup = supervised()
+    ports = listening()
+    mine = os.getpid()
+    mytree = set()
+    cur = mine
+    while cur in procs and cur not in mytree:
+        mytree.add(cur)
+        cur = procs[cur]["ppid"]
+    trees = {}
+    for s in sup:
+        trees[s["nome"]] = tree_of(s["pid"], procs) if s.get("pid") in procs else set()
+    in_sup = set().union(*trees.values()) if trees else set()
+
+    # loose: orfaos (ppid 1) fora de arvores supervisionadas/infra/proprio script
+    infra_pids = {p for p, st in procs.items() if st["comm"] in INFRA or st["comm"].startswith("s6-")}
+    infra_all = set(infra_pids)
+    for p in infra_pids:
+        infra_all |= tree_of(p, procs) if procs[p]["comm"] in ("s6-svscan", "sshd") else set()
+    loose_roots = []
+    for p, st in procs.items():
+        if p == 1 or p in in_sup or p in infra_all or p in mytree:
+            continue
+        if not _argv(p):  # thread do sistema
+            continue
+        if st["comm"] in SHELLS:
+            continue
+        if st["ppid"] == 1:
+            loose_roots.append(p)
+    loose_trees = {p: tree_of(p, procs) for p in loose_roots}
+
+    watch = set(in_sup)
+    for t in loose_trees.values():
+        watch |= t
+    cpu = sample(watch, procs) if watch else {}
+
+    def ports_of(pids):
+        return sorted({port for port, ps in ports if set(ps) & pids})
+
+    servicos = []
+    for s in sup:
+        pids = trees.get(s["nome"], set())
+        servicos.append({
+            "nome": s["nome"], "estado": s["estado"], "pid": s.get("pid"),
+            "uptime_s": s.get("uptime_s", 0), "reinicios": None,
+            "cpu_pct": round(sum(cpu.get(p, 0.0) for p in pids), 1),
+            "mem_mb": mem_mb(pids, procs), "portas": ports_of(pids),
+            "iniciar_no_boot": s.get("iniciar_no_boot", True), "origem": "supervisionado",
+        })
+
+    soltos = []
+    for root, pids in loose_trees.items():
+        st = procs[root]
+        argv = redact_argv(_argv(root))
+        cmdline = " ".join(argv)
+        soltos.append({
+            "pid": root, "comando": os.path.basename(argv[0]) if argv else st["comm"],
+            "argumentos": cmdline[:CMD_MAX], "uptime_s": _uptime_of(st, up_now),
+            "cpu_pct": round(sum(cpu.get(p, 0.0) for p in pids), 1), "mem_mb": mem_mb(pids, procs),
+            "portas": ports_of(pids), "usuario": _uid(root), "origem": "solto",
+        })
+    soltos.sort(key=lambda x: (x["cpu_pct"], x["mem_mb"]), reverse=True)
+    soltos = soltos[:10]
+
+    conteineres, tem_docker = [], shutil.which("docker") is not None
+    if tem_docker:
+        rc, txt = run(["docker", "ps", "-a", "--format", "{{json .}}"], 5)
+        if rc != 0:
+            avisos.append("docker_indisponivel")
+        for line in txt.splitlines():
+            try:
+                c = json.loads(line)
+            except ValueError:
+                continue
+            conteineres.append({"nome": str(c.get("Names", ""))[:80], "imagem": str(c.get("Image", ""))[:120],
+                                "estado": str(c.get("State", ""))[:20], "status": str(c.get("Status", ""))[:80],
+                                "portas": redact_text(str(c.get("Ports", "")))[:160]})
+    return {"schema": 1, "gerado_em": int(time.time()), "servicos": servicos, "soltos": soltos,
+            "conteineres": conteineres, "docker": tem_docker, "avisos": avisos}
+
+
+def main():
+    try:
+        data = collect()
+    except Exception as e:  # a saida tem que ser sempre JSON valido
+        data = {"schema": 1, "gerado_em": int(time.time()), "servicos": [], "soltos": [],
+                "conteineres": [], "docker": False, "avisos": ["falha_coleta:" + type(e).__name__]}
+    sys.stdout.write(json.dumps(data, ensure_ascii=False))
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
