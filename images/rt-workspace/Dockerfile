@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl xz-utils openssh-server openssh-client python3 git procps iproute2 \
+      ca-certificates curl xz-utils openssh-server openssh-client python3 python3-pip python3-venv git procps iproute2 \
       less nano locales \
  && rm -rf /var/lib/apt/lists/* \
  && arch="$(case "${TARGETARCH}" in arm64) echo aarch64;; *) echo x86_64;; esac)" \

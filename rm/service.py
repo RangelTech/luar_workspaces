@@ -27,6 +27,7 @@ from .config import Settings
 from .docker_client import Conflict, DockerClient, DockerError
 from .firewall import Firewall
 from .quota import QuotaBackend
+from .redact import redact_lines
 from .store import MemoryStore, PostgresStore
 
 Store = MemoryStore | PostgresStore
@@ -284,6 +285,93 @@ class TenantService:
         cut = self.MAX_EXEC_OUT
         return {"exit_code": res.get("exit_code"), "stdout": (res.get("stdout") or "")[-cut:],
                 "stderr": (res.get("stderr") or "")[-cut:]}
+
+    # ----- servicos em execucao no workspace (somente leitura + start/stop/restart/logs) ----------
+    SERVICES_SCRIPT = "/usr/local/bin/rt-services-json"
+    SERVICE_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
+    SERVICE_ACTIONS = ("start", "stop", "restart")
+
+    def _workspace_state(self, t: str) -> tuple[dict, str, str]:
+        """(row, estado, nome do contêiner). Nunca acorda o ambiente."""
+        row = self._need(t)
+        if not row["workspace_enabled"]:
+            return row, "sem_ambiente", ""
+        if row["suspended"]:
+            return row, "suspenso", ""
+        name = naming.workspace_name(t)
+        info = self.docker.inspect_container(name)
+        if info is None or not (info.get("State") or {}).get("Running"):
+            return row, "parado", name
+        return row, "ativo", name
+
+    def list_services(self, t: str, actor: str) -> dict:
+        row, estado, name = self._workspace_state(t)
+        out: dict[str, Any] = {"ambiente": estado, "servicos": [], "soltos": [], "conteineres": [],
+                               "docker": False, "avisos": []}
+        if estado != "ativo":
+            return out
+        res = self.docker.exec_run(name, ["timeout", "-k", "2", "20", self.SERVICES_SCRIPT],
+                                   user="root", timeout=25)
+        try:
+            data = json.loads((res.get("stdout") or "").strip().splitlines()[-1])
+            if not isinstance(data, dict) or res.get("exit_code") not in (0, None):
+                raise ValueError("bad")
+        except (ValueError, IndexError):
+            raise ServiceError(502, "services_probe_failed") from None
+        urls: dict[int, str] = {}
+        for e in row.get("exposures") or []:
+            try:
+                urls[int(e["port"])] = "https://" + traefik.managed_host(e["app"], t, self.s.apps_domain)
+            except (KeyError, ValueError, TypeError):
+                continue
+        for sv in data.get("servicos") or []:
+            sv["url_publica"] = next((urls[p] for p in sv.get("portas") or [] if p in urls), None)
+        for sv in data.get("soltos") or []:
+            sv["argumentos"] = redact_lines(str(sv.get("argumentos", "")))[:240]
+            sv["url_publica"] = next((urls[p] for p in sv.get("portas") or [] if p in urls), None)
+        for k in ("servicos", "soltos", "conteineres", "avisos"):
+            out[k] = data.get(k) or []
+        out["docker"] = bool(data.get("docker"))
+        out["gerado_em"] = data.get("gerado_em")
+        return out
+
+    def _service_target(self, t: str, svc_name: str) -> tuple[str, str]:
+        if not isinstance(svc_name, str) or not self.SERVICE_NAME.match(svc_name):
+            raise ServiceError(400, "invalid_service_name")
+        _, estado, name = self._workspace_state(t)
+        if estado == "suspenso":
+            raise ServiceError(423, "tenant_suspended")
+        if estado != "ativo":
+            raise ServiceError(409, "workspace_not_running")
+        return name, svc_name
+
+    def service_action(self, t: str, svc_name: str, action: str, actor: str, by: str = "") -> dict:
+        if action not in self.SERVICE_ACTIONS:
+            raise ServiceError(404, "unknown_service_action", action)
+        name, svc_name = self._service_target(t, svc_name)
+        res = self.docker.exec_run(
+            name, ["timeout", "-k", "2", "20", "/usr/local/bin/rt-service", action, svc_name],
+            user="root", timeout=25)
+        ok = res.get("exit_code") == 0
+        self._event(t, actor, f"workspace.service.{action}",
+                    {"service": svc_name, "by": (by or "")[:80], "ok": ok})
+        if not ok:
+            raise ServiceError(404 if "unable" in (res.get("stderr") or "") else 502,
+                               "service_action_failed")
+        return {"service": svc_name, "action": action, "ok": True}
+
+    def service_logs(self, t: str, svc_name: str, actor: str, lines: int = 200, by: str = "") -> dict:
+        name, svc_name = self._service_target(t, svc_name)
+        lines = max(1, min(int(lines), 200))
+        res = self.docker.exec_run(
+            name, ["timeout", "-k", "2", "20", "/usr/local/bin/rt-service", "logs", svc_name, str(lines)],
+            user="root", timeout=25)
+        self._event(t, actor, "workspace.service.logs",
+                    {"service": svc_name, "by": (by or "")[:80], "lines": lines})
+        if res.get("exit_code") != 0:
+            raise ServiceError(404, "service_logs_unavailable")
+        return {"service": svc_name, "lines": lines,
+                "log": redact_lines((res.get("stdout") or "")[-self.MAX_EXEC_OUT:])}
 
     def observed(self, t: str) -> dict:
         res: dict[str, Any] = {}

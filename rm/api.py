@@ -321,6 +321,32 @@ def create_app(ctx: Ctx) -> FastAPI:
         return await idempotent(request, t, lambda: svc.set_component(t, "workspace", action,
                                                                       p.service))
 
+    @app.get("/v1/tenants/{t}/services")
+    async def services_list(t: str, request: Request):
+        p = await principal(request)
+        need_tenant(p, t)
+        return await asyncio.to_thread(svc.list_services, t, p.service)
+
+    @app.get("/v1/tenants/{t}/services/{name}/logs")
+    async def service_logs(t: str, name: str, request: Request):
+        p = await principal(request)
+        need_tenant(p, t)
+        q = request.query_params
+        try:
+            lines = int(q.get("lines", "200"))
+        except ValueError:
+            raise ServiceError(400, "invalid_lines") from None
+        return await asyncio.to_thread(svc.service_logs, t, name, p.service, lines,
+                                       str(q.get("by", "")))
+
+    @app.post("/v1/tenants/{t}/services/{name}:{action}")
+    async def service_act(t: str, name: str, action: str, request: Request):
+        p = await principal(request)
+        need_tenant(p, t)
+        b = await _body_json(request)
+        return await asyncio.to_thread(svc.service_action, t, name, action, p.service,
+                                       str(b.get("by", "")))
+
     @app.post("/v1/tenants/{t}/activity")
     async def activity(t: str, request: Request):
         p = await principal(request)
