@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""luar-pc: trabalha nos computadores conectados à empresa (spec 11 §26.15).
+
+Só biblioteca padrão. As credenciais chegam por variáveis de ambiente (PC_HOSTS e PC_<NOME>_*),
+nunca são impressas. O arquivo do cliente não sai do computador: scripts Python rodam LÁ e só texto
+volta (limitado a 8 KB por padrão).
+
+  luar-pc hosts
+  luar-pc ls NOME CAMINHO         (aceita Desktop, Documentos, Downloads, ~)
+  luar-pc find NOME PADRAO
+  luar-pc run NOME "comando"      (PowerShell no Windows, sh no Linux)
+  luar-pc py NOME script.py [args]  (roda o script no computador, com o Python do kit)
+  luar-pc pull NOME CAMINHO [DESTINO]
+  luar-pc push NOME ARQUIVO CAMINHO
+  luar-pc pip NOME pacote
+  luar-pc kit NOME status
+"""
+import base64
+import os
+import subprocess
+import sys
+import tempfile
+
+MAX_OUT = int(os.environ.get("LUAR_PC_MAX_OUT", "8192"))
+RELAY = "/usr/local/bin/luar-relay"
+
+
+def die(msg: str, code: int = 2):
+    sys.stderr.write(f"luar-pc: {msg}\n")
+    sys.exit(code)
+
+
+def hosts() -> dict:
+    out = {}
+    for item in filter(None, os.environ.get("PC_HOSTS", "").split(",")):
+        name, _, base = item.partition("=")
+        out[name.strip().lower()] = (name.strip(), base.strip())
+    return out
+
+
+def resolve(name: str):
+    h = hosts().get(name.lower())
+    if not h:
+        known = ", ".join(v[0] for v in hosts().values()) or "nenhum liberado para este agente"
+        die(f"computador '{name}' não está disponível. Disponíveis: {known}")
+    return h
+
+
+def ssh_base(name: str):
+    real, base = resolve(name)
+    keyfile = os.path.join(tempfile.gettempdir(), f"luar-pc-{base}.key")
+    key = os.environ.get(f"{base}_KEY", "")
+    if not key:
+        die(f"sem chave para '{real}'")
+    fd = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(key if key.endswith("\n") else key + "\n")
+    hub, port, tok = (os.environ.get(f"{base}_{k}", "") for k in ("HUB", "PORT", "TOKEN"))
+    proxy = f"python3 {RELAY} {hub} {port} {tok}"
+    cmd = [
+        "ssh", "-i", keyfile, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ServerAliveInterval=15",
+        "-o", f"ProxyCommand={proxy}", f"x@{base.lower()}",
+    ]
+    return cmd, os.environ.get(f"{base}_OS", "windows").lower(), real
+
+
+def remote(name: str, command: str, stdin: bytes | None = None, timeout: int = 120):
+    cmd, osname, real = ssh_base(name)
+    try:
+        r = subprocess.run(cmd + [command], input=stdin, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        die(f"o comando passou de {timeout}s no computador '{real}'", 124)
+    return r, osname
+
+
+def emit(r, limit: int = MAX_OUT):
+    out = r.stdout.decode("utf-8", "replace")
+    err = r.stderr.decode("utf-8", "replace")
+    if len(out) > limit:
+        out = "[saída cortada; últimos %d caracteres]\n" % limit + out[-limit:]
+    sys.stdout.write(out)
+    if err.strip():
+        sys.stderr.write(err[-limit:])
+    return r.returncode
+
+
+def ps_quote(s: str) -> str:
+    return "'" + s.replace("'", "''") + "'"
+
+
+WIN_FOLDERS = {
+    "desktop": "[Environment]::GetFolderPath('Desktop')",
+    "área de trabalho": "[Environment]::GetFolderPath('Desktop')",
+    "area de trabalho": "[Environment]::GetFolderPath('Desktop')",
+    "documentos": "[Environment]::GetFolderPath('MyDocuments')",
+    "downloads": "(New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path",
+    "~": "$HOME",
+}
+
+
+def win_path(p: str) -> str:
+    key = p.strip().lower().rstrip("/\\")
+    if key in WIN_FOLDERS:
+        return WIN_FOLDERS[key]
+    for pre in ("desktop", "área de trabalho", "area de trabalho", "documentos", "downloads"):
+        for sep in ("/", "\\"):
+            if key.startswith(pre + sep):
+                rest = p.strip()[len(pre) + 1:]
+                return f"(Join-Path ({WIN_FOLDERS[pre]}) {ps_quote(rest)})"
+    return ps_quote(p)
+
+
+def lin_path(p: str) -> str:
+    low = p.strip().lower()
+    if low in ("desktop", "área de trabalho", "area de trabalho"):
+        return '"$(xdg-user-dir DESKTOP 2>/dev/null || echo $HOME/Desktop)"'
+    if low == "documentos":
+        return '"$(xdg-user-dir DOCUMENTS 2>/dev/null || echo $HOME/Documents)"'
+    if low == "downloads":
+        return '"$(xdg-user-dir DOWNLOAD 2>/dev/null || echo $HOME/Downloads)"'
+    if low == "~":
+        return '"$HOME"'
+    return "'" + p.replace("'", "'\\''") + "'"
+
+
+def is_win(osname: str) -> bool:
+    return osname.startswith("win")
+
+
+def cmd_ls(name, path):
+    _, osname, _ = ssh_base(name)
+    if is_win(osname):
+        c = (f"$p={win_path(path)}; Get-ChildItem -Force -LiteralPath $p -ErrorAction Stop | ForEach-Object {{ "
+             "(@($(if($_.PSIsContainer){'D'}else{'F'}),$_.Length,$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm'),$_.Name) -join [char]9) }")
+    else:
+        c = f"ls -la --time-style=long-iso -- {lin_path(path)}"
+    return emit(remote(name, c)[0], 16384)
+
+
+def cmd_find(name, pattern):
+    _, osname, _ = ssh_base(name)
+    if is_win(osname):
+        c = ("$roots=@([Environment]::GetFolderPath('Desktop'),[Environment]::GetFolderPath('MyDocuments'),"
+             "(New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path,$HOME) | Select-Object -Unique;"
+             f"foreach($r in $roots){{ Get-ChildItem -Path $r -Recurse -ErrorAction SilentlyContinue -Filter {ps_quote('*' + pattern + '*')} | "
+             "Select-Object -First 30 -ExpandProperty FullName }")
+    else:
+        c = f"find \"$HOME\" -iname '*{pattern.replace(chr(39), '')}*' 2>/dev/null | head -n 30"
+    return emit(remote(name, c, timeout=180)[0], 16384)
+
+
+def cmd_run(name, command):
+    return emit(remote(name, command, timeout=int(os.environ.get("LUAR_PC_TIMEOUT", "300")))[0])
+
+
+PY_WIN = (
+    "[Console]::InputEncoding=[Text.Encoding]::UTF8;"
+    "$f=Join-Path $env:TEMP ('luar-'+[guid]::NewGuid().ToString('n')+'.py');"
+    "[IO.File]::WriteAllText($f,[Console]::In.ReadToEnd(),(New-Object Text.UTF8Encoding $false));"
+    "$py=Join-Path $env:ProgramData 'LUAR\\conector\\kit\\python\\python.exe';"
+    "if(-not(Test-Path $py)){{$py=(Get-Command python -ErrorAction SilentlyContinue).Source}};"
+    "if(-not $py){{$py=(Get-Command py -ErrorAction SilentlyContinue).Source}};"
+    "if(-not $py){{[Console]::Error.WriteLine('Python nao encontrado neste computador'); exit 127}};"
+    "$env:PYTHONIOENCODING='utf-8'; & $py $f {args}; $c=$LASTEXITCODE; Remove-Item $f -ErrorAction SilentlyContinue; exit $c"
+)
+PY_LIN = (
+    "f=$(mktemp /tmp/luar-XXXXXX.py); cat > \"$f\"; "
+    "py=\"$HOME/.local/share/luar-conector/kit/python/bin/python3\"; [ -x \"$py\" ] || py=$(command -v python3); "
+    "[ -n \"$py\" ] || { echo 'Python nao encontrado neste computador' >&2; exit 127; }; "
+    "PYTHONIOENCODING=utf-8 \"$py\" \"$f\" {args}; c=$?; rm -f \"$f\"; exit $c"
+)
+
+
+def cmd_py(name, script, args):
+    _, osname, _ = ssh_base(name)
+    data = sys.stdin.buffer.read() if script == "-" else open(script, "rb").read()
+    if is_win(osname):
+        c = PY_WIN.format(args=" ".join(ps_quote(a) for a in args))
+    else:
+        c = PY_LIN.format(args=" ".join("'" + a.replace("'", "'\\''") + "'" for a in args))
+    return emit(remote(name, c, stdin=data, timeout=int(os.environ.get("LUAR_PC_TIMEOUT", "600")))[0])
+
+
+def cmd_pull(name, path, dest=None):
+    _, osname, _ = ssh_base(name)
+    if is_win(osname):
+        c = f"[Convert]::ToBase64String([IO.File]::ReadAllBytes({win_path(path)}))"
+    else:
+        c = f"base64 -w0 {lin_path(path)}"
+    r, _ = remote(name, c, timeout=900)
+    if r.returncode != 0:
+        return emit(r)
+    data = base64.b64decode(r.stdout.strip() or b"")
+    dest = dest or os.path.join("/workspace/computadores", name, os.path.basename(path.replace("\\", "/")))
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    open(dest, "wb").write(data)
+    print(f"copiado {len(data)} bytes para {dest}")
+    return 0
+
+
+def cmd_push(name, src, path):
+    _, osname, _ = ssh_base(name)
+    b64 = base64.b64encode(open(src, "rb").read())
+    if is_win(osname):
+        c = ("[Console]::InputEncoding=[Text.Encoding]::UTF8;"
+             f"$t={win_path(path)}; [IO.File]::WriteAllBytes($t,[Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()));"
+             " Write-Output ('gravado '+$t)")
+    else:
+        c = f"base64 -d > {lin_path(path)} && echo gravado"
+    return emit(remote(name, c, stdin=b64, timeout=900)[0])
+
+
+def cmd_pip(name, pkg):
+    code = f"import subprocess,sys;sys.exit(subprocess.call([sys.executable,'-m','pip','install','--user','{pkg}']))"
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(code)
+    try:
+        return cmd_py(name, f.name, [])
+    finally:
+        os.unlink(f.name)
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd = a[0]
+    if cmd == "hosts":
+        for _, (real, base) in hosts().items():
+            print(f"{real}\t{os.environ.get(base + '_OS', '?')}")
+        return 0
+    if cmd == "ls" and len(a) >= 3:
+        return cmd_ls(a[1], a[2])
+    if cmd == "find" and len(a) >= 3:
+        return cmd_find(a[1], a[2])
+    if cmd == "run" and len(a) >= 3:
+        return cmd_run(a[1], " ".join(a[2:]))
+    if cmd == "py" and len(a) >= 3:
+        return cmd_py(a[1], a[2], a[3:])
+    if cmd == "pull" and len(a) >= 3:
+        return cmd_pull(a[1], a[2], a[3] if len(a) > 3 else None)
+    if cmd == "push" and len(a) >= 4:
+        return cmd_push(a[1], a[2], a[3])
+    if cmd == "pip" and len(a) >= 3:
+        return cmd_pip(a[1], a[2])
+    if cmd == "kit" and len(a) >= 3:
+        return cmd_py(a[1], "-", []) if False else cmd_run(a[1], "python --version" if is_win(ssh_base(a[1])[1]) else "python3 --version")
+    die("uso: luar-pc hosts | ls | find | run | py | pull | push | pip | kit (veja --help)")
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
