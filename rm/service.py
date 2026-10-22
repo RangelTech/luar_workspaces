@@ -271,7 +271,7 @@ class TenantService:
             raise ServiceError(409, "workspace_not_enabled")
         if row["suspended"]:
             raise ServiceError(423, "tenant_suspended")
-        timeout_s = max(1, min(int(timeout_s), 600))
+        timeout_s = max(1, min(int(timeout_s), 1500))
         name = naming.workspace_name(t)
         info = self.docker.inspect_container(name)
         if info is None or not (info.get("State") or {}).get("Running"):
