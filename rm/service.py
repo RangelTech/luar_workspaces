@@ -319,6 +319,11 @@ class TenantService:
             res = self.docker.exec_run(name, probe, user="root", timeout=25)
         try:
             data = json.loads((res.get("stdout") or "").strip().splitlines()[-1])
+            if isinstance(data, dict) and data.get("schema", 0) < 2 and res.get("exit_code") == 0:
+                # Script de imagem antiga (sem o ss como ws): atualiza a copia e repete.
+                self._install_services_script(name)
+                res = self.docker.exec_run(name, probe, user="root", timeout=25)
+                data = json.loads((res.get("stdout") or "").strip().splitlines()[-1])
             if not isinstance(data, dict) or res.get("exit_code") not in (0, None):
                 raise ValueError("bad")
         except (ValueError, IndexError):

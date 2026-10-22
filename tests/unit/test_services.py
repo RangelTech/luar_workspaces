@@ -28,7 +28,7 @@ def load_script():
 
 
 PAYLOAD = {
-    "schema": 1, "gerado_em": 1, "docker": True, "avisos": [],
+    "schema": 2, "gerado_em": 1, "docker": True, "avisos": [],
     "servicos": [{"nome": "web", "estado": "rodando", "pid": 40, "uptime_s": 90, "reinicios": None,
                   "cpu_pct": 1.2, "mem_mb": 30.5, "portas": [8000], "origem": "supervisionado"}],
     "soltos": [{"pid": 99, "comando": "python3", "argumentos": "python3 x.py --password hunter2 token=abc123",
@@ -48,7 +48,7 @@ def test_list_services_merges_public_url_and_redacts(env, tenant):
 
 
 def test_zero_services_is_valid(env, tenant):
-    empty = {"schema": 1, "servicos": [], "soltos": [], "conteineres": [], "docker": False, "avisos": []}
+    empty = {"schema": 2, "servicos": [], "soltos": [], "conteineres": [], "docker": False, "avisos": []}
     env.fake.exec_results = {CMD: {"exit_code": 0, "stdout": json.dumps(empty), "stderr": ""}}
     out = env.svc.list_services(tenant, "backend")
     assert out["servicos"] == [] and out["soltos"] == [] and out["ambiente"] == "ativo"
@@ -141,7 +141,7 @@ def test_script_runs_with_zero_services_and_valid_json(tmp_path):
              RT_PROC_ROOT=str(tmp_path / "semproc"))
     out = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, env=e, timeout=30)
     data = json.loads(out.stdout)
-    assert data["servicos"] == [] and data["soltos"] == [] and data["schema"] == 1
+    assert data["servicos"] == [] and data["soltos"] == [] and data["schema"] == 2
 
 
 def test_script_parsers():
@@ -206,3 +206,18 @@ def test_svstat_real_format_with_pgid_is_running():
     mod = load_script()
     d = mod.parse_svstat("up (pid 371 pgid 371) 4219 seconds")
     assert d["estado"] == "rodando" and d["pid"] == 371 and d["uptime_s"] == 4219
+
+
+def test_stale_schema_script_is_refreshed(env, tenant):
+    old = dict(PAYLOAD, schema=1)
+    seq = [json.dumps(old), json.dumps(PAYLOAD)]
+    real = env.fake.exec_run
+
+    def exec_run(name, cmd, **kw):
+        if " ".join(cmd) == CMD:
+            return {"exit_code": 0, "stdout": seq.pop(0), "stderr": ""}
+        return real(name, cmd, **kw)
+
+    env.fake.exec_run = exec_run
+    out = env.svc.list_services(tenant, "backend")
+    assert out["servicos"][0]["nome"] == "web" and not seq
