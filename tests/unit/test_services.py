@@ -141,7 +141,7 @@ def test_script_runs_with_zero_services_and_valid_json(tmp_path):
              RT_PROC_ROOT=str(tmp_path / "semproc"))
     out = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, env=e, timeout=30)
     data = json.loads(out.stdout)
-    assert data["servicos"] == [] and data["soltos"] == [] and data["schema"] == 1
+    assert data["servicos"] == [] and data["soltos"] == [] and data["schema"] == 2
 
 
 def test_script_parsers():
