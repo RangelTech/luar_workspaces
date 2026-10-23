@@ -158,7 +158,7 @@ PY_WIN = (
     "[Console]::InputEncoding=[Text.Encoding]::UTF8;"
     "$f=Join-Path $env:TEMP ('luar-'+[guid]::NewGuid().ToString('n')+'.py');"
     "[IO.File]::WriteAllText($f,[Console]::In.ReadToEnd(),(New-Object Text.UTF8Encoding $false));"
-    "$py=Join-Path $env:ProgramData 'LUAR\\conector\\kit\\python\\python.exe';"
+    "$py=Join-Path $env:LOCALAPPDATA 'LUAR\\conector\\kit\\python\\python.exe';"
     "if(-not(Test-Path $py)){{$py=(Get-Command python -ErrorAction SilentlyContinue).Source}};"
     "if(-not $py){{$py=(Get-Command py -ErrorAction SilentlyContinue).Source}};"
     "if(-not $py){{[Console]::Error.WriteLine('Python nao encontrado neste computador'); exit 127}};"
