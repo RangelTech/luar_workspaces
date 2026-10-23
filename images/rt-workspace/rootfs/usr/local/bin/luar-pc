@@ -129,12 +129,16 @@ def is_win(osname: str) -> bool:
 
 
 def cmd_ls(name, path):
+    """Lista uma pasta: total + os primeiros LUAR_PC_LS_MAX itens (padrao 60), para a saida caber no limite."""
     _, osname, _ = ssh_base(name)
+    top = int(os.environ.get("LUAR_PC_LS_MAX", "60"))
     if is_win(osname):
-        c = (f"$p={win_path(path)}; Get-ChildItem -Force -LiteralPath $p -ErrorAction Stop | ForEach-Object {{ "
+        c = (f"$p={win_path(path)}; $i=@(Get-ChildItem -Force -LiteralPath $p -ErrorAction Stop); "
+             f"'total: '+$i.Count+' itens (mostrando os {top} primeiros)'; "
+             f"$i | Select-Object -First {top} | ForEach-Object {{ "
              "(@($(if($_.PSIsContainer){'D'}else{'F'}),$_.Length,$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm'),$_.Name) -join [char]9) }")
     else:
-        c = f"ls -la --time-style=long-iso -- {lin_path(path)}"
+        c = f"ls -la --time-style=long-iso -- {lin_path(path)} | head -n {top + 2}"
     return emit(remote(name, c)[0], 16384)
 
 
